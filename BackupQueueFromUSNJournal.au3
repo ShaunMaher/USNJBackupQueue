@@ -85,27 +85,32 @@ If ($cmdline[0] > 0) Then
         Exit
       EndIf
     ElseIf $cmdline[$i] = "/?" Or $cmdline[$i] = "/h" Or $cmdline[$i] = "-h" Or $cmdline[$i] = "-?" Then
-      ConsoleWrite($MyName & " " & $MyVersion & @CRLF & @CRLF)
-      ConsoleWrite("  " & $MyName & ".exe [-h|-l|-v|-V] [-m num] Volume" & @CRLF)
-      ConsoleWrite("     -h      Show this help message and quit" & @CRLF)
-      ConsoleWrite("     -l      Use longer sleep cycles to reduce CPU usage and the expense of the" & @CRLF)
-      ConsoleWrite("             process taking longer.  You can use this switch twice to further" & @CRLF)
-      ConsoleWrite("             increase the length of the sleep cycles." & @CRLF)
-      ConsoleWrite("     -m num  Specify the USN of the first acceptable journal entry.  This will" & @CRLF)
-      ConsoleWrite("             likely be the 'Maximum Found USN' from the previous run." & @CRLF)
-      ConsoleWrite("             Basically, all journal entries before the specified num will be" & @CRLF)
-      ConsoleWrite("             ignored as it is assumed that the changes they represent have" & @CRLF)
-      ConsoleWrite("             already been captured by previous backup runs." & @CRLF)
-      ConsoleWrite("     -v      Enable verbose output.  Use twice for more verbose output." & @CRLF)
-      ConsoleWrite("     -V      Output version and quit" & @CRLF)
-      ConsoleWrite("     Volume  The volume to extract the USN Journal from" & @CRLF & @CRLF)
+      HelpMessage()
       Exit
     EndIf
   Next
+
+  ; The Volume specified on the command line can be in either the for of "X:" or
+  ; just "X".
+  If (StringLen($cmdline[$cmdline[0]]) = 1) Then
+    $TargetDrive = $cmdline[$cmdline[0]] & ":"
+  ElseIf (StringLen($cmdline[$cmdline[0]]) = 2) And (StringRight($cmdline[$cmdline[0]], 1) = ":") Then
+    $TargetDrive = $cmdline[$cmdline[0]]
+  Else
+    ConsoleWriteError("'" & $cmdline[$cmdline[0]] & "' is not a valid value for Volume." & @CRLF & @CRLF)
+    HelpMessage()
+    Exit
+  EndIf
+Else
+  HelpMessage()
+  Exit
 EndIf
 
-;TODO: This should be from the command line argument (processing not quite right yet)
-$TargetDrive = "E:"
+; Input validation - Ensure target volume exists
+If Not (FileExists($TargetDrive & "\")) Then
+  ConsoleWriteError("Error: The specified target volume '" & $TargetDrive & "' doesn't seem to exist.")
+  Exit
+EndIf
 
 ; Input validation - Ensure target volume is NTFS
 _ReadBootSector($TargetDrive)
@@ -114,8 +119,21 @@ If @error Then
 	Exit
 EndIf
 
-;TODO: Check that the target drive has the USN journal enabled and enable if
+;TODO: Test that this works
+; Check that the target drive has the USN journal enabled and enable if
 ; necessary
+Local $FSUTILPid = Run("fsutil usn queryjournal " & $TargetDrive, @ScriptDir, @SW_HIDE, $STDOUT_CHILD)
+ProcessWaitClose($FSUTILPid)
+Local $FSUTILResult = StdoutRead($FSUTILPid)
+If $VerboseOn > 0 Then ConsoleWrite($FSUTILResult)
+If (StringInStr($FSUTILResult, "First Usn") < 1) Then
+  ConsoleWriteError("The USN Journal is not enabled on " & $TargetDrive & "." & @CRLF & @CRLF)
+  ConsoleWriteError("On Windows 2008 and higher you can use the 'fsutil' tool to enable the USN Journal." & @CRLF & @CRLF)
+  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+  Exit
+Else
+  If $VerboseOn > 0 Then ConsoleWrite("USN Journal is enabled for " & $TargetDrive & "." & @CRLF)
+EndIf
 
 ; We need ExtractUsnJrnl.exe.  Make sure it exists.
 If FileExists(@ScriptDir & "\ExtractUsnJrnl\ExtractUsnJrnl.exe") Then
@@ -130,17 +148,21 @@ EndIf
 ; Need to set $File to USN Journal file path
 $File = $ExtractUsnJrnlPath & "\$UsnJrnl_$J.bin"
 
-;TODO: Delete $File if it exists
+; Delete $File if it exists
+If FileExists($File) Then
+  If $VerboseOn > 0 Then ConsoleWrite("Deleting previously extracted USN Journal." & @CRLF)
+  FileDelete($File)
+EndIf
 
 ; Here we call the ExtractUsnJrnl.exe to extract a copt of the USN Journal from
 ; the target drive.
 ConsoleWrite("Extracting USN Journal with ExtractUsnJrnl.exe" & @CRLF)
-Local $ExtractUsnJrnlPid = Run($ExtractUsnJrnlPath & "ExtractUsnJrnl.exe " & $TargetDrive, @ScriptDir & "\ExtractUsnJrnl", @SW_HIDE, $STDOUT_CHILD)
+Local $ExtractUsnJrnlPid = Run($ExtractUsnJrnlPath & "ExtractUsnJrnl.exe " & $TargetDrive, $ExtractUsnJrnlPath, @SW_HIDE, $STDOUT_CHILD)
 ProcessWaitClose($ExtractUsnJrnlPid)
 Local $ExtractUsnJrnlResult = StdoutRead($ExtractUsnJrnlPid)
 If $VerboseOn > 0 Then ConsoleWrite($ExtractUsnJrnlResult)
 
-; Enable UNICODE
+;TODO: Do we still need this? Enable UNICODE
 $EncodingWhenOpen = 2+32
 
 If Not FileExists($File) Then
@@ -169,9 +191,18 @@ For $i = 0 To 15 ;$MaxRecords-1
 Next
 
 ConsoleWrite("Decoding finished" & @CRLF)
-ConsoleWrite("Minimum Acceped USN:" & $MinUSN & @CRLF)
-ConsoleWrite("Minimum Found USN:" & $FirstUSN & @CRLF)
-ConsoleWrite("Maximum Found USN:" & $MaxUSN & @CRLF)
+ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
+ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
+ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+
+; If $MinUSN < $FirstUSN then there are gaps in the journal between the
+; last time we ran and now.  DO A FULL BACKUP!
+If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
+  ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
+  ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
+  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+  Exit
+EndIf
 
 ; Resolve MtfReference numbers to real file paths
 ;TODO: This process could be sped up if we modified the MftRef2Name function
@@ -348,4 +379,21 @@ Func MftRef2Name($IndexNumber)
   		ExitLoop
   	EndIf
   Next
+EndFunc
+
+Func HelpMessage()
+  ConsoleWrite($MyName & " " & $MyVersion & @CRLF & @CRLF)
+  ConsoleWrite("  " & $MyName & ".exe [-h|-l|-v|-V] [-m num] Volume" & @CRLF)
+  ConsoleWrite("     -h      Show this help message and quit" & @CRLF)
+  ConsoleWrite("     -l      Use longer sleep cycles to reduce CPU usage and the expense of the" & @CRLF)
+  ConsoleWrite("             process taking longer.  You can use this switch twice to further" & @CRLF)
+  ConsoleWrite("             increase the length of the sleep cycles." & @CRLF)
+  ConsoleWrite("     -m num  Specify the USN of the first acceptable journal entry.  This will" & @CRLF)
+  ConsoleWrite("             likely be the 'Maximum Found USN' from the previous run." & @CRLF)
+  ConsoleWrite("             Basically, all journal entries before the specified num will be" & @CRLF)
+  ConsoleWrite("             ignored as it is assumed that the changes they represent have" & @CRLF)
+  ConsoleWrite("             already been captured by previous backup runs." & @CRLF)
+  ConsoleWrite("     -v      Enable verbose output.  Use twice for more verbose output." & @CRLF)
+  ConsoleWrite("     -V      Output version and quit" & @CRLF)
+  ConsoleWrite("     Volume  The volume to extract the USN Journal from" & @CRLF & @CRLF)
 EndFunc

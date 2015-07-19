@@ -54,6 +54,10 @@ Global $CPUThrottle = 10
 Global $File, $WithQuotes, $MaxRecords, $nBytes, $UsnJrnlCsv, $UsnJrnlCsvFile
 Global $TargetDrive, $ExtractUsnJrnlPath, $ExtractUsnJrnlPid
 Global $ExtractUsnJrnlResult
+Global $MFTReferences[2]
+Global $MftRefIds[2]
+Global $MftRefNames[2]
+Global $MftRefParents[2]
 Global $MaxUSN = 0
 Global $MinUSN = 0
 Global $FirstUSN = 0
@@ -215,6 +219,9 @@ For $i = 0 To UBound($MFTReferences)-1
   Sleep($CPUThrottle)
 Next
 
+If $VerboseOn > 0 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, ", ") & @CRLF)
+If $VerboseOn > 0 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, ", ") & @CRLF)
+
 _WinAPI_CloseHandle($hFile)
 
 Func _UsnDecodeRecord($Record)
@@ -338,14 +345,33 @@ Func MftRef2Name($IndexNumber)
   	$TestFileName = $TmpRef[1]
   	$TestParentRef = $TmpRef[0]
   	$ResolvedPath = $TestFileName
+
+    ;I think this Do loop is where optimisations might be possible
+    ; Using the arrays to cache the Parents and Names dropped my test run from
+    ; 32.58s to 17.49s
+    ; If I could cache the ultimate result of the loop, except for the first
+    ; cycle (which finds the directory the file is in) then I think we could
+    ; improve further.
+    ; Wait, is this loop only folders and parents?  Is the file done above?
   	Do
-  		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
-  		$NewRecord = _FindFileMFTRecord($TestParentRef)
-  		_DecodeMFTRecord($NewRecord,2)
-  		$TmpRef = _GetParent()
-  		If @error then ExitLoop
-  		$TestFileName = $TmpRef[1]
-  		$TestParentRef = $TmpRef[0]
+      $ParentIndex = _ArraySearch($MftRefParents, $TestParentRef & ":", 0, 0, 0, 1)
+      $NameIndex = _ArraySearch($MftRefNames, $TestParentRef & ":", 0, 0, 0, 1)
+      If (($ParentIndex > -1) And ($NameIndex > -1)) Then
+        $TestFileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[1]
+        $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[1]
+        ;ConsoleWrite("I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?" & @CRLF)
+      Else
+    		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
+    		$NewRecord = _FindFileMFTRecord($TestParentRef)
+    		_DecodeMFTRecord($NewRecord,2)
+    		$TmpRef = _GetParent()
+    		If @error then ExitLoop
+        ConsoleWrite($TestParentRef & " -> " & $TmpRef[0] & @CRLF)
+        _ArrayAdd($MftRefParents, $TestParentRef & ":" & $TmpRef[0])
+        _ArrayAdd($MftRefNames, $TestParentRef & ":" & $TmpRef[1])
+    		$TestFileName = $TmpRef[1]
+    		$TestParentRef = $TmpRef[0]
+      EndIf
   		$ResolvedPath = $TestFileName&"\"&$ResolvedPath
   	Until $TestParentRef=5
 

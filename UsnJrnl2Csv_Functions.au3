@@ -16,7 +16,6 @@ Global $_COMMON_KERNEL32DLL = DllOpen("kernel32.dll")
 
 ; The following uses $_COMMON_KERNEL32DLL so make sure it is defined first
 Global $tDelta = _WinTime_GetUTCToLocalFileTimeDelta()
-Global $MFTReferences[2]
 
 ;; Below this line is stripped directly from UsnJrnl2csv.au3
 Func _UsnProcessPage($TargetPage)

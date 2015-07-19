@@ -11,6 +11,7 @@ So you don't repeat the mistake I made, because this is a console script, you ca
 Finally, my excuse for code in this script being ugly and inefficient is that this is the first time I have ever worked with AutoIt code and there are large portions of Joakim's code that I don't fully understand.  Sorry.
 
 ##Usage
+```
   BackupQueueFromUSNJournal.exe [-h|-l|-v|-V] [-m num] Volume
      -h      Show this help message and quit
      -l      Use longer sleep cycles to reduce CPU usage and the expense of the
@@ -24,5 +25,6 @@ Finally, my excuse for code in this script being ugly and inefficient is that th
      -v      Enable verbose output.  Use twice for more verbose output.
      -V      Output version and quit
      Volume  The volume to extract the USN Journal from
-     
+```
+
 More doco to come once this project matures a little more.

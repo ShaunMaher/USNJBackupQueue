@@ -55,8 +55,8 @@ Global $File, $WithQuotes, $MaxRecords, $nBytes, $UsnJrnlCsv, $UsnJrnlCsvFile
 Global $TargetDrive, $ExtractUsnJrnlPath, $ExtractUsnJrnlPid
 Global $ExtractUsnJrnlResult
 Global $MFTReferences[2]
-Global $MftRefIds[2]
 Global $MftRefNames[2]
+Global $MftRefFullNames[2]
 Global $MftRefParents[2]
 Global $MaxUSN = 0
 Global $MinUSN = 0
@@ -208,10 +208,8 @@ If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
   Exit
 EndIf
 
-; Resolve MtfReference numbers to real file paths
-;TODO: This process could be sped up if we modified the MftRef2Name function
-; below to cache in an array some of the MftIDs in an array so they didn't all
-; need to be resolved from $Mft
+; Resolve MtfReference numbers to real file paths.  This is still our biggest
+; performance bottleneck and needs more attention
 $MFTReferences = _ArrayUnique($MFTReferences, 0, 0, 0, $ARRAYUNIQUE_NOCOUNT, $ARRAYUNIQUE_MATCH)
 If $VerboseOn > 0 Then ConsoleWrite("Accepted USNs: " & _ArrayToString($MFTReferences, ", ") & @CRLF)
 For $i = 0 To UBound($MFTReferences)-1
@@ -219,8 +217,9 @@ For $i = 0 To UBound($MFTReferences)-1
   Sleep($CPUThrottle)
 Next
 
-If $VerboseOn > 0 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, ", ") & @CRLF)
-If $VerboseOn > 0 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, ", ") & @CRLF)
+If $VerboseOn > 1 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, @CRLF) & @CRLF)
+If $VerboseOn > 1 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, @CRLF) & @CRLF)
+If $VerboseOn > 1 Then ConsoleWrite("MftRefFullNames: " & _ArrayToString($MftRefFullNames, @CRLF) & @CRLF)
 
 _WinAPI_CloseHandle($hFile)
 
@@ -295,7 +294,7 @@ Func MftRef2Name($IndexNumber)
   Local Static $Initialised = False
 
   If Not $Initialised Then
-    If $VerboseOn > 0 Then ConsoleWrite("MftRef2Name: Initailising (this should only happen once)" & @CRLF)
+    If $VerboseOn > 1 Then ConsoleWrite("MftRef2Name: Initailising (this should only happen once)" & @CRLF)
     $ParentDir = _GenDirArray($TargetDrive & "\")
     Global $MftRefArray[$DirArray[0]+1]
 
@@ -344,40 +343,55 @@ Func MftRef2Name($IndexNumber)
   	$TmpRef = _GetParent()
   	$TestFileName = $TmpRef[1]
   	$TestParentRef = $TmpRef[0]
-  	$ResolvedPath = $TestFileName
+    $BottomRef = $TestParentRef
+    $FileName = $TestFileName
+    $ResolvedPath = ""
 
-    ;I think this Do loop is where optimisations might be possible
-    ; Using the arrays to cache the Parents and Names dropped my test run from
-    ; 32.58s to 17.49s
-    ; If I could cache the ultimate result of the loop, except for the first
-    ; cycle (which finds the directory the file is in) then I think we could
-    ; improve further.
-    ; Wait, is this loop only folders and parents?  Is the file done above?
-  	Do
-      $ParentIndex = _ArraySearch($MftRefParents, $TestParentRef & ":", 0, 0, 0, 1)
-      $NameIndex = _ArraySearch($MftRefNames, $TestParentRef & ":", 0, 0, 0, 1)
-      If (($ParentIndex > -1) And ($NameIndex > -1)) Then
-        $TestFileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[1]
-        $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[1]
-        ;ConsoleWrite("I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?" & @CRLF)
-      Else
-    		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
-    		$NewRecord = _FindFileMFTRecord($TestParentRef)
-    		_DecodeMFTRecord($NewRecord,2)
-    		$TmpRef = _GetParent()
-    		If @error then ExitLoop
-        ConsoleWrite($TestParentRef & " -> " & $TmpRef[0] & @CRLF)
-        _ArrayAdd($MftRefParents, $TestParentRef & ":" & $TmpRef[0])
-        _ArrayAdd($MftRefNames, $TestParentRef & ":" & $TmpRef[1])
-    		$TestFileName = $TmpRef[1]
-    		$TestParentRef = $TmpRef[0]
-      EndIf
-  		$ResolvedPath = $TestFileName&"\"&$ResolvedPath
-  	Until $TestParentRef=5
+    ; Our first line of defense against actually going to the $Mft to work out
+    ; where in the filesystem heirachy this file exists is that we cache the
+    ; full path of any folder reference we have used in the past in the
+    ; $MftRefFullNames array.
+    $NameIndex = _ArraySearch($MftRefFullNames, $TestParentRef & ":", 0, 0, 0, 1)
+    If ($NameIndex > -1) Then
+      ;ConsoleWrite("Using cached Full Name")
+      $ResolvedPath = StringSplit($MftRefFullNames[$NameIndex], ":", $STR_NOCOUNT)[1]
 
-  	If StringLeft($ResolvedPath,2) = ".\" Then $ResolvedPath = StringTrimLeft($ResolvedPath,2)
-  	Return $TargetDrive & "\" & $ResolvedPath
+    Else
+      ; If we haven't cached the full location of this folder, we have to
+      ; navigate our way up the tree to the root.  Each time we fetch a name and
+      ; $Mft reference we cache it to MftRefNames and MftRefParents so we never
+      ; need to ask the file system the same question twice
+    	Do
+        $ParentIndex = _ArraySearch($MftRefParents, $TestParentRef & ":", 0, 0, 0, 1)
+        $NameIndex = _ArraySearch($MftRefNames, $TestParentRef & ":", 0, 0, 0, 1)
+        If (($ParentIndex > -1) And ($NameIndex > -1)) Then
+          $TestFileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[1]
+          $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[1]
+          ;ConsoleWrite("I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?" & @CRLF)
+        Else
+      		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
+      		$NewRecord = _FindFileMFTRecord($TestParentRef)
+      		_DecodeMFTRecord($NewRecord,2)
+      		$TmpRef = _GetParent()
+      		If @error then ExitLoop
+          ConsoleWrite($TestParentRef & " -> " & $TmpRef[0] & @CRLF)
+          _ArrayAdd($MftRefParents, $TestParentRef & ":" & $TmpRef[0])
+          _ArrayAdd($MftRefNames, $TestParentRef & ":" & $TmpRef[1])
+      		$TestFileName = $TmpRef[1]
+      		$TestParentRef = $TmpRef[0]
+        EndIf
+    		$ResolvedPath = $TestFileName&"\"&$ResolvedPath
+    	Until $TestParentRef=5
+
+      If StringLeft($ResolvedPath,2) = ".\" Then $ResolvedPath = StringTrimLeft($ResolvedPath,2)
+      _ArrayAdd($MftRefFullNames, $BottomRef & ":" & $ResolvedPath)
+    EndIf
+
+  	Return $TargetDrive & "\" & $ResolvedPath & "\" & $FileName
   EndIf
+  ; I don't think we actually use any of the code in this function below this
+  ; line
+
   ; Test if root directory is selected
   If $DirArray[0] = 2 And $DirArray[2] = "" Then
     Return $TargetDrive & "\"

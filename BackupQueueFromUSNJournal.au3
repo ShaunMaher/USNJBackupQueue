@@ -64,6 +64,8 @@ Global $FirstUSN = 0
 Global $OutputToFile = ""
 Global $AppendToOutputFile = 2  ; 1 = Append, 2 = Overwrite
 Global $OutputFileEncoding = 0  ;32 = Unicode, 0 = UTF8
+Global $PathSeparator = "\"
+Global $RelativePaths = False
 
 ; Command line argument processing
 If ($cmdline[0] > 0) Then
@@ -94,8 +96,12 @@ If ($cmdline[0] > 0) Then
         ConsoleWriteError("Error: The value specified for the -m switch must be a number." & @CRLF)
         Exit
       EndIf
+    ElseIf $cmdline[$i] = "-r" Then
+      $RelativePaths = True
     ElseIf $cmdline[$i] = "-o" Then
       $OutputToFile = $cmdline[$i + 1]
+    ElseIf $cmdline[$i] = "-u" Then
+        $PathSeparator = "/"
     ElseIf $cmdline[$i] = "/?" Or $cmdline[$i] = "/h" Or $cmdline[$i] = "-h" Or $cmdline[$i] = "-?" Then
       HelpMessage()
       Exit
@@ -326,6 +332,7 @@ EndFunc
 
 Func MftRef2Name($IndexNumber)
   Local Static $Initialised = False
+  Local $FullFileName = ""
 
   If Not $Initialised Then
     If $VerboseOn > 1 Then ConsoleWrite("MftRef2Name: Initailising (this should only happen once)" & @CRLF)
@@ -426,14 +433,20 @@ Func MftRef2Name($IndexNumber)
       		$TestFileName = $TmpRef[1]
       		$TestParentRef = $TmpRef[0]
         EndIf
-    		$ResolvedPath = $TestFileName&"\"&$ResolvedPath
+    		$ResolvedPath = $TestFileName & $PathSeparator & $ResolvedPath
     	Until $TestParentRef=5
 
-      If StringLeft($ResolvedPath,2) = ".\" Then $ResolvedPath = StringTrimLeft($ResolvedPath,2)
+      If StringLeft($ResolvedPath,2) = "." & $PathSeparator Then $ResolvedPath = StringTrimLeft($ResolvedPath,2)
       _ArrayAdd($MftRefFullNames, $BottomRef & ":" & $ResolvedPath)
     EndIf
 
-  	Return StringReplace($TargetDrive & "\" & $ResolvedPath & "\" & $FileName, "\\", "\")
+    If ($RelativePaths) Then
+      $FullFileName = $ResolvedPath & $PathSeparator & $FileName
+    Else
+      $FullFileName = $TargetDrive & $PathSeparator & $ResolvedPath & $PathSeparator & $FileName
+    EndIf
+
+  	Return StringReplace($FullFileName, $PathSeparator & $PathSeparator, $PathSeparator)
   EndIf
 EndFunc
 
@@ -450,8 +463,10 @@ Func HelpMessage()
   ConsoleWrite("             Basically, all journal entries before the specified num will be" & @CRLF)
   ConsoleWrite("             ignored as it is assumed that the changes they represent have" & @CRLF)
   ConsoleWrite("             already been captured by previous backup runs." & @CRLF)
-  ConsoleWrite("     -v      Enable verbose output.  Use twice for more verbose output." & @CRLF)
+  ConsoleWrite("     -r      Output file paths relative to the volume root.")
   ConsoleWrite("     -o file Output changed file list to file." & @CRLF)
+  ConsoleWrite("     -u      Use Unix (/) instead of Windows (\) path separator." & @CRLF)
+  ConsoleWrite("     -v      Enable verbose output.  Use twice for more verbose output." & @CRLF)
   ConsoleWrite("     -V      Output version and quit" & @CRLF)
   ConsoleWrite("     Volume  The volume to extract the USN Journal from" & @CRLF & @CRLF)
 EndFunc

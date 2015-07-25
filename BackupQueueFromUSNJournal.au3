@@ -106,8 +106,12 @@ If ($cmdline[0] > 0) Then
     Exit
   EndIf
 Else
-  HelpMessage()
-  Exit
+  ;HelpMessage()
+  ;Exit
+
+  ;For debugging in GUI
+  $TargetDrive = "E:"
+  $VerboseOn = 1
 EndIf
 
 ; Input validation - Ensure target volume exists
@@ -184,7 +188,7 @@ If $hFile = 0 Then
 EndIf
 $InputFileSize = _WinAPI_GetFileSizeEx($hFile)
 $MaxRecords = Ceiling($InputFileSize/$Record_Size)
-For $i = 0 To 15 ;$MaxRecords-1
+For $i = 0 To $MaxRecords-1
 	$CurrentPage=$i
 	_WinAPI_SetFilePointerEx($hFile, $i*$Record_Size, $FILE_BEGIN)
 	If $i = $MaxRecords-1 Then $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
@@ -286,6 +290,11 @@ Func _UsnDecodeRecord($Record)
       $MaxUSN = $UsnJrnlUsn
     EndIf
 
+    ; Here we have a file name, a file reference number and a parent reference
+    ;  number, we may as well add them to the cache.  MftRef2Name might find
+    ;  them useful.
+    _ArrayAdd($MftRefParents, $UsnJrnlFileReferenceNumber & ":" & $UsnJrnlParentFileReferenceNumber)
+    _ArrayAdd($MftRefNames, $UsnJrnlFileReferenceNumber & ":" & $UsnJrnlFileName)
     _ArrayAdd($MFTReferences, $UsnJrnlFileReferenceNumber)
   EndIf
 EndFunc
@@ -328,24 +337,36 @@ Func MftRef2Name($IndexNumber)
   EndIf
 
   ; Resolve path based on MFT ref as input
+  $ParentIndex = -1
+  $NameIndex = -1
+  $ResolvedPath = ""
   If StringIsDigit($IndexNumber) Then
-  	Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
-  	$NewRecord = _FindFileMFTRecord($IndexNumber)
-  	_DecodeMFTRecord($NewRecord,2)
-  	$TestHeaderFlags = $RecordHdrArr[7][1]
-  	If StringInStr($TestHeaderFlags,"ALLOCATED")=0 And StringInStr($TestHeaderFlags,"ENABLED")=0 Then
-  		;_DumpInfo()
-  		;ConsoleWrite("File marked as deleted. Makes no sense to resolve the path" & @CRLF)
-  		Return "Deleted!"
+    ; _UsnDecodeRecord may have already inserted this file's name and index into the cache
+    $ParentIndex = _ArraySearch($MftRefParents, $IndexNumber & ":", 0, 0, 0, 1)
+    $NameIndex = _ArraySearch($MftRefNames, $IndexNumber & ":", 0, 0, 0, 1)
 
-    ;TODO: ElseIf: See "$HEADER_Flags = 'FOLDER'" in _DecodeMFTRecord to filter out folders
-  	EndIf
-  	$TmpRef = _GetParent()
-  	$TestFileName = $TmpRef[1]
-  	$TestParentRef = $TmpRef[0]
+    If (($ParentIndex < 0) Or ($NameIndex < 0)) Then
+    	Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
+    	$NewRecord = _FindFileMFTRecord($IndexNumber)
+    	_DecodeMFTRecord($NewRecord,2)
+    	$TestHeaderFlags = $RecordHdrArr[7][1]
+    	If StringInStr($TestHeaderFlags,"ALLOCATED")=0 And StringInStr($TestHeaderFlags,"ENABLED")=0 Then
+    		Return "Deleted!"
+
+      ;TODO: ElseIf: See "$HEADER_Flags = 'FOLDER'" in _DecodeMFTRecord to filter out folders
+    	EndIf
+    	$TmpRef = _GetParent()
+    	$TestFileName = $TmpRef[1]
+    	$TestParentRef = $TmpRef[0]
+      ;$BottomRef = $TestParentRef
+      $FileName = $TestFileName
+      ConsoleWrite("I looked up this file's parent and it is: " & $TestParentRef & @CRLF)
+      ConsoleWrite("I looked up this file's name and it is: " & $FileName & @CRLF)
+    Else
+      $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[1]
+      $FileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[1]
+    EndIf
     $BottomRef = $TestParentRef
-    $FileName = $TestFileName
-    $ResolvedPath = ""
 
     ; Our first line of defense against actually going to the $Mft to work out
     ; where in the filesystem heirachy this file exists is that we cache the
@@ -389,36 +410,6 @@ Func MftRef2Name($IndexNumber)
 
   	Return $TargetDrive & "\" & $ResolvedPath & "\" & $FileName
   EndIf
-  ; I don't think we actually use any of the code in this function below this
-  ; line
-
-  ; Test if root directory is selected
-  If $DirArray[0] = 2 And $DirArray[2] = "" Then
-    Return $TargetDrive & "\"
-  EndIf
-  ; Resolve path under root directory
-  $NextRef = 5
-  $MftRefArray[1]=$NextRef
-  $ResolvedPath = $DirArray[1]
-  For $i = 2 To $DirArray[0]
-  	Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
-  	$NewRecord = _FindFileMFTRecord($NextRef)
-  	_DecodeMFTRecord($NewRecord,1)
-  	$NextRef = _ParseIndex($DirArray[$i])
-  	$MftRefArray[$i]=$NextRef
-  	If @error Then
-  		ConsoleWriteError("MftRef2Name Error: 1" & @CRLF)
-  		Return 1
-  	ElseIf $i=$DirArray[0] Then
-      Return $ResolvedPath & "\" & $DirArray[$i]
-  	ElseIf StringIsDigit($NextRef) Then
-  		$ResolvedPath &= "\" & $DirArray[$i]
-  		ContinueLoop
-  	Else
-  		ConsoleWriteError("MftRef2Name Error: Something went wrong" & @CRLF)
-  		ExitLoop
-  	EndIf
-  Next
 EndFunc
 
 Func HelpMessage()

@@ -435,25 +435,29 @@ While 1
 				_ArrayAdd($AttribXType, $AttributeType)
 				_ArrayAdd($AttribXCounter, $SI_Number)
 			EndIf
-		Case $AttributeType = $ATTRIBUTE_LIST
-			$ATTRIBUTE_LIST_ON = "TRUE"
-			$ATTRIBLIST_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $ATTRIBLIST_Number)
+			If $FILE_NAME_ON = "TRUE" Then
+				ConsoleWrite("Exitting loop early: STANDARD_INFORMATION")
+				ExitLoop
 			EndIf
-			$MFTEntryOrig = $MFTEntry
-			$AttrList = StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2)
-			_DecodeAttrList($HEADER_MFTRecordNumber, $AttrList)		;produces $AttrQ - extra record list
-			$str = ""
-			For $i = 1 To $AttrQ[0]
-				$record = _FindFileMFTRecord($AttrQ[$i])
-				$str &= _StripMftRecord($record)		;no header or end marker
-			Next
-			$str &= "FFFFFFFF"		;add end marker
-			$MFTEntry = StringMid($MFTEntry,1,($HEADER_RecordRealSize-8)*2+2) & $str       ;strip "FFFFFFFF..." first
-   		Case $AttributeType = $FILE_NAME
+;		Case $AttributeType = $ATTRIBUTE_LIST
+;			$ATTRIBUTE_LIST_ON = "TRUE"
+;			$ATTRIBLIST_Number += 1
+;			If $MFTMode = 1 Then
+;				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				_ArrayAdd($AttribXType, $AttributeType)
+;				_ArrayAdd($AttribXCounter, $ATTRIBLIST_Number)
+;			EndIf
+;			$MFTEntryOrig = $MFTEntry
+;			$AttrList = StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2)
+;			_DecodeAttrList($HEADER_MFTRecordNumber, $AttrList)		;produces $AttrQ - extra record list
+;			$str = ""
+;			For $i = 1 To $AttrQ[0]
+;				$record = _FindFileMFTRecord($AttrQ[$i])
+;				$str &= _StripMftRecord($record)		;no header or end marker
+;			Next
+;			$str &= "FFFFFFFF"		;add end marker
+;			$MFTEntry = StringMid($MFTEntry,1,($HEADER_RecordRealSize-8)*2+2) & $str       ;strip "FFFFFFFF..." first
+    Case $AttributeType = $FILE_NAME
 			$FILE_NAME_ON = "TRUE"
 			$FN_Number += 1
 			If $MFTMode = 1 Or $MFTMode = 2 Then
@@ -475,154 +479,158 @@ While 1
 				Case $NameSpace = "03"	;DOS+WIN32
 					$NameQ[3] = $attr
 			EndSelect
-		Case $AttributeType = $OBJECT_ID
-			$OBJECT_ID_ON = "TRUE"
-			$OBJID_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $OBJID_Number)
+			If $STANDARD_INFORMATION_ON = "TRUE" Then
+				ConsoleWrite("Exitting loop early: FILE_NAME")
+				ExitLoop
 			EndIf
-		Case $AttributeType = $SECURITY_DESCRIPTOR
-			$SECURITY_DESCRIPTOR_ON = "TRUE"
-			$SECURITY_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $SECURITY_Number)
-			EndIf
-		Case $AttributeType = $VOLUME_NAME
-			$VOLUME_NAME_ON = "TRUE"
-			$VOLNAME_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $VOLNAME_Number)
-			EndIf
-		Case $AttributeType = $VOLUME_INFORMATION
-			$VOLUME_INFORMATION_ON = "TRUE"
-			$VOLINFO_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $VOLINFO_Number)
-			EndIf
-		Case $AttributeType = $DATA
-			$DATA_ON = "TRUE"
-			$DATA_Number += 1
-			_ArrayAdd($DataQ, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-		Case $AttributeType = $INDEX_ROOT
-			$INDEX_ROOT_ON = "TRUE"
-			$INDEXROOT_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $INDEXROOT_Number)
-				ReDim $IRArr[12][$INDEXROOT_Number+1]
-				$CoreIndexRoot = _GetAttributeEntry(StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				$CoreIndexRootChunk = $CoreIndexRoot[0]
-				$CoreIndexRootName = $CoreIndexRoot[1]
-				If $CoreIndexRootName = "$I30" Then _Get_IndexRoot($CoreIndexRootChunk,$INDEXROOT_Number,$CoreIndexRootName)
-			EndIf
-		Case $AttributeType = $INDEX_ALLOCATION
-			$INDEX_ALLOCATION_ON = "TRUE"
-			$INDEXALLOC_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $INDEXALLOC_Number)
-				$CoreIndexAllocation = _GetAttributeEntry(StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				$CoreIndexAllocationChunk = $CoreIndexAllocation[0]
-				$CoreIndexAllocationName = $CoreIndexAllocation[1]
+;		Case $AttributeType = $OBJECT_ID
+;			$OBJECT_ID_ON = "TRUE"
+;			$OBJID_Number += 1
+;			If $MFTMode = 1 Then
+;				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				_ArrayAdd($AttribXType, $AttributeType)
+;				_ArrayAdd($AttribXCounter, $OBJID_Number)
+;			EndIf
+;		Case $AttributeType = $SECURITY_DESCRIPTOR
+;			$SECURITY_DESCRIPTOR_ON = "TRUE"
+;			$SECURITY_Number += 1
+;			If $MFTMode = 1 Then
+;				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				_ArrayAdd($AttribXType, $AttributeType)
+;				_ArrayAdd($AttribXCounter, $SECURITY_Number)
+;			EndIf
+;		Case $AttributeType = $VOLUME_NAME
+;			$VOLUME_NAME_ON = "TRUE"
+;			$VOLNAME_Number += 1
+;			If $MFTMode = 1 Then
+;				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				_ArrayAdd($AttribXType, $AttributeType)
+;				_ArrayAdd($AttribXCounter, $VOLNAME_Number)
+;			EndIf
+;		Case $AttributeType = $VOLUME_INFORMATION
+;			$VOLUME_INFORMATION_ON = "TRUE"
+;			$VOLINFO_Number += 1
+;			If $MFTMode = 1 Then
+;				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				_ArrayAdd($AttribXType, $AttributeType)
+;				_ArrayAdd($AttribXCounter, $VOLINFO_Number)
+;			EndIf
+;		Case $AttributeType = $DATA
+;			$DATA_ON = "TRUE"
+;			$DATA_Number += 1
+;			_ArrayAdd($DataQ, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;		Case $AttributeType = $INDEX_ROOT
+;			$INDEX_ROOT_ON = "TRUE"
+;			$INDEXROOT_Number += 1
+;			If $MFTMode = 1 Then
+;				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				_ArrayAdd($AttribXType, $AttributeType)
+;				_ArrayAdd($AttribXCounter, $INDEXROOT_Number)
+;				ReDim $IRArr[12][$INDEXROOT_Number+1]
+;				$CoreIndexRoot = _GetAttributeEntry(StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				$CoreIndexRootChunk = $CoreIndexRoot[0]
+;				$CoreIndexRootName = $CoreIndexRoot[1]
+;				If $CoreIndexRootName = "$I30" Then _Get_IndexRoot($CoreIndexRootChunk,$INDEXROOT_Number,$CoreIndexRootName)
+;			EndIf
+;		Case $AttributeType = $INDEX_ALLOCATION
+;			$INDEX_ALLOCATION_ON = "TRUE"
+;			$INDEXALLOC_Number += 1
+;			If $MFTMode = 1 Then
+;				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				_ArrayAdd($AttribXType, $AttributeType)
+;				_ArrayAdd($AttribXCounter, $INDEXALLOC_Number)
+;				$CoreIndexAllocation = _GetAttributeEntry(StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;				$CoreIndexAllocationChunk = $CoreIndexAllocation[0]
+;				$CoreIndexAllocationName = $CoreIndexAllocation[1]
 ;				_Arrayadd($HexDumpIndxRecord,$CoreIndexAllocationChunk)
-				If $CoreIndexAllocationName = "$I30" Then _Get_IndexAllocation($CoreIndexAllocationChunk,$INDEXALLOC_Number,$CoreIndexAllocationName)
-			EndIf
-		Case $AttributeType = $BITMAP
-			$BITMAP_ON = "TRUE"
-			$BITMAP_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $BITMAP_Number)
-			EndIf
-		Case $AttributeType = $REPARSE_POINT
-			$REPARSE_POINT_ON = "TRUE"
-			$REPARSEPOINT_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $REPARSEPOINT_Number)
-			EndIf
-		Case $AttributeType = $EA_INFORMATION
-			$EA_INFORMATION_ON = "TRUE"
-			$EAINFO_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $EAINFO_Number)
-			EndIf
-		Case $AttributeType = $EA
-			$EA_ON = "TRUE"
-			$EA_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $EA_Number)
-			EndIf
-		Case $AttributeType = $PROPERTY_SET
-			$PROPERTY_SET_ON = "TRUE"
-			$PROPERTYSET_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $PROPERTYSET_Number)
-			EndIf
-		Case $AttributeType = $LOGGED_UTILITY_STREAM
-			$LOGGED_UTILITY_STREAM_ON = "TRUE"
-			$LOGGEDUTILSTREAM_Number += 1
-			If $MFTMode = 1 Then
-				_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
-				_ArrayAdd($AttribXType, $AttributeType)
-				_ArrayAdd($AttribXCounter, $LOGGEDUTILSTREAM_Number)
-			EndIf
+; 			If $CoreIndexAllocationName = "$I30" Then _Get_IndexAllocation($CoreIndexAllocationChunk,$INDEXALLOC_Number,$CoreIndexAllocationName)
+;	 		EndIf
+;	 	Case $AttributeType = $BITMAP
+;	 		$BITMAP_ON = "TRUE"
+;	 		$BITMAP_Number += 1
+;	 		If $MFTMode = 1 Then
+;	 			_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;	 			_ArrayAdd($AttribXType, $AttributeType)
+;	 			_ArrayAdd($AttribXCounter, $BITMAP_Number)
+;	 		EndIf
+;	 	Case $AttributeType = $REPARSE_POINT
+;	 		$REPARSE_POINT_ON = "TRUE"
+;	 		$REPARSEPOINT_Number += 1
+;	 		If $MFTMode = 1 Then
+;			_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;			_ArrayAdd($AttribXType, $AttributeType)
+;			_ArrayAdd($AttribXCounter, $REPARSEPOINT_Number)
+;		EndIf
+;	Case $AttributeType = $EA_INFORMATION
+;		$EA_INFORMATION_ON = "TRUE"
+;		$EAINFO_Number += 1
+;		If $MFTMode = 1 Then
+;			_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;			_ArrayAdd($AttribXType, $AttributeType)
+;			_ArrayAdd($AttribXCounter, $EAINFO_Number)
+;		EndIf
+;	Case $AttributeType = $EA
+;		$EA_ON = "TRUE"
+;		$EA_Number += 1
+;		If $MFTMode = 1 Then
+;			_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;			_ArrayAdd($AttribXType, $AttributeType)
+;			_ArrayAdd($AttribXCounter, $EA_Number)
+;		EndIf
+;	Case $AttributeType = $PROPERTY_SET
+;		$PROPERTY_SET_ON = "TRUE"
+;		$PROPERTYSET_Number += 1
+;		If $MFTMode = 1 Then
+;			_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;			_ArrayAdd($AttribXType, $AttributeType)
+;			_ArrayAdd($AttribXCounter, $PROPERTYSET_Number)
+;		EndIf
+;	Case $AttributeType = $LOGGED_UTILITY_STREAM
+;		$LOGGED_UTILITY_STREAM_ON = "TRUE"
+;		$LOGGEDUTILSTREAM_Number += 1
+;		If $MFTMode = 1 Then
+;			_ArrayAdd($AttribX, StringMid($MFTEntry,$AttributeOffset,$AttributeSize*2))
+;			_ArrayAdd($AttribXType, $AttributeType)
+;			_ArrayAdd($AttribXCounter, $LOGGEDUTILSTREAM_Number)
+;		EndIf
 		Case $AttributeType = $ATTRIBUTE_END_MARKER
 			ExitLoop
 	EndSelect
 	$AttributeOffset += $AttributeSize*2
 WEnd
 $AttributesArr[1][2] = $STANDARD_INFORMATION_ON
-$AttributesArr[2][2] = $ATTRIBUTE_LIST_ON
+;$AttributesArr[2][2] = $ATTRIBUTE_LIST_ON
 $AttributesArr[3][2] = $FILE_NAME_ON
-$AttributesArr[4][2] = $OBJECT_ID_ON
-$AttributesArr[5][2] = $SECURITY_DESCRIPTOR_ON
-$AttributesArr[6][2] = $VOLUME_NAME_ON
-$AttributesArr[7][2] = $VOLUME_INFORMATION_ON
-$AttributesArr[8][2] = $DATA_ON
-$AttributesArr[9][2] = $INDEX_ROOT_ON
-$AttributesArr[10][2] = $INDEX_ALLOCATION_ON
-$AttributesArr[11][2] = $BITMAP_ON
-$AttributesArr[12][2] = $REPARSE_POINT_ON
-$AttributesArr[13][2] = $EA_INFORMATION_ON
-$AttributesArr[14][2] = $EA_ON
-$AttributesArr[15][2] = $PROPERTY_SET_ON
-$AttributesArr[16][2] = $LOGGED_UTILITY_STREAM_ON
+;$AttributesArr[4][2] = $OBJECT_ID_ON
+;$AttributesArr[5][2] = $SECURITY_DESCRIPTOR_ON
+;$AttributesArr[6][2] = $VOLUME_NAME_ON
+;$AttributesArr[7][2] = $VOLUME_INFORMATION_ON
+;$AttributesArr[8][2] = $DATA_ON
+;$AttributesArr[9][2] = $INDEX_ROOT_ON
+;$AttributesArr[10][2] = $INDEX_ALLOCATION_ON
+;$AttributesArr[11][2] = $BITMAP_ON
+;$AttributesArr[12][2] = $REPARSE_POINT_ON
+;$AttributesArr[13][2] = $EA_INFORMATION_ON
+;$AttributesArr[14][2] = $EA_ON
+;$AttributesArr[15][2] = $PROPERTY_SET_ON
+;$AttributesArr[16][2] = $LOGGED_UTILITY_STREAM_ON
 ;$AttributesArr[17][2] = $ATTRIBUTE_END_MARKER_ON
-$AttributesArr[1][3] = $SI_Number
-$AttributesArr[2][3] = $ATTRIBLIST_Number
-$AttributesArr[3][3] = $FN_Number
-$AttributesArr[4][3] = $OBJID_Number
-$AttributesArr[5][3] = $SECURITY_Number
-$AttributesArr[6][3] = $VOLNAME_Number
-$AttributesArr[7][3] = $VOLINFO_Number
-$AttributesArr[8][3] = $DATA_Number
-$AttributesArr[9][3] = $INDEXROOT_Number
-$AttributesArr[10][3] = $INDEXALLOC_Number
-$AttributesArr[11][3] = $BITMAP_Number
-$AttributesArr[12][3] = $REPARSEPOINT_Number
-$AttributesArr[13][3] = $EAINFO_Number
-$AttributesArr[14][3] = $EA_Number
-$AttributesArr[15][3] = $PROPERTYSET_Number
-$AttributesArr[16][3] = $LOGGEDUTILSTREAM_Number
+;$AttributesArr[1][3] = $SI_Number
+;$AttributesArr[2][3] = $ATTRIBLIST_Number
+;$AttributesArr[3][3] = $FN_Number
+;$AttributesArr[4][3] = $OBJID_Number
+;$AttributesArr[5][3] = $SECURITY_Number
+;$AttributesArr[6][3] = $VOLNAME_Number
+;$AttributesArr[7][3] = $VOLINFO_Number
+;$AttributesArr[8][3] = $DATA_Number
+;$AttributesArr[9][3] = $INDEXROOT_Number
+;$AttributesArr[10][3] = $INDEXALLOC_Number
+;$AttributesArr[11][3] = $BITMAP_Number
+;$AttributesArr[12][3] = $REPARSEPOINT_Number
+;$AttributesArr[13][3] = $EAINFO_Number
+;$AttributesArr[14][3] = $EA_Number
+;$AttributesArr[15][3] = $PROPERTYSET_Number
+;$AttributesArr[16][3] = $LOGGEDUTILSTREAM_Number
 $AttributesArr[17][3] = 1
 EndFunc
 

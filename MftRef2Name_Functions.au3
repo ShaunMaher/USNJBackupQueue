@@ -436,7 +436,6 @@ While 1
 				_ArrayAdd($AttribXCounter, $SI_Number)
 			EndIf
 			If $FILE_NAME_ON = "TRUE" Then
-				ConsoleWrite("Exitting loop early: STANDARD_INFORMATION")
 				ExitLoop
 			EndIf
 ;		Case $AttributeType = $ATTRIBUTE_LIST
@@ -480,7 +479,6 @@ While 1
 					$NameQ[3] = $attr
 			EndSelect
 			If $STANDARD_INFORMATION_ON = "TRUE" Then
-				ConsoleWrite("Exitting loop early: FILE_NAME")
 				ExitLoop
 			EndIf
 ;		Case $AttributeType = $OBJECT_ID

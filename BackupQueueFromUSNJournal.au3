@@ -61,11 +61,17 @@ Global $MftRefParents[2]
 Global $MaxUSN = 0
 Global $MinUSN = 0
 Global $FirstUSN = 0
+Global $OutputToFile = ""
+Global $AppendToOutputFile = 2  ; 1 = Append, 2 = Overwrite
+Global $OutputFileEncoding = 0  ;32 = Unicode, 0 = UTF8
 
 ; Command line argument processing
 If ($cmdline[0] > 0) Then
   For $i = 1 To $cmdline[0]
-    If $cmdline[$i] = "-v" Then
+    If $cmdline[$i] = "-a" Then
+      $AppendToOutputFile = 1
+      $OutputToFile = $cmdline[$i + 1]
+    ElseIf $cmdline[$i] = "-v" Then
       $VerboseOn = $VerboseOn + 1
       If ($VerboseOn = 1) Then
         ConsoleWrite("Turning on verbose output" & @CRLF)
@@ -88,6 +94,8 @@ If ($cmdline[0] > 0) Then
         ConsoleWriteError("Error: The value specified for the -m switch must be a number." & @CRLF)
         Exit
       EndIf
+    ElseIf $cmdline[$i] = "-o" Then
+      $OutputToFile = $cmdline[$i + 1]
     ElseIf $cmdline[$i] = "/?" Or $cmdline[$i] = "/h" Or $cmdline[$i] = "-h" Or $cmdline[$i] = "-?" Then
       HelpMessage()
       Exit
@@ -162,6 +170,15 @@ If FileExists($File) Then
   FileDelete($File)
 EndIf
 
+; If we're going to output to file, open the file for writing now
+If (StringLen($OutputToFile) > 0) Then
+  $OutputFile = FileOpen($OutputToFile, $OutputFileEncoding + $AppendToOutputFile)
+  If @error Then
+    ConsoleWriteError("Error creating: " & $OutputToFile & @CRLF)
+    Exit
+  EndIf
+EndIf
+
 ; Here we call the ExtractUsnJrnl.exe to extract a copt of the USN Journal from
 ; the target drive.
 ConsoleWrite("Extracting USN Journal with ExtractUsnJrnl.exe" & @CRLF)
@@ -169,9 +186,6 @@ Local $ExtractUsnJrnlPid = Run($ExtractUsnJrnlPath & "ExtractUsnJrnl.exe " & $Ta
 ProcessWaitClose($ExtractUsnJrnlPid)
 Local $ExtractUsnJrnlResult = StdoutRead($ExtractUsnJrnlPid)
 If $VerboseOn > 0 Then ConsoleWrite($ExtractUsnJrnlResult)
-
-;TODO: Do we still need this? Enable UNICODE
-$EncodingWhenOpen = 2+32
 
 If Not FileExists($File) Then
 	ConsoleWrite("Error: Could not find extracted USN Journal file.  Maybe ExtractUsnJrnl.exe failed." & @CRLF)
@@ -188,7 +202,7 @@ If $hFile = 0 Then
 EndIf
 $InputFileSize = _WinAPI_GetFileSizeEx($hFile)
 $MaxRecords = Ceiling($InputFileSize/$Record_Size)
-For $i = 0 To $MaxRecords-1
+For $i = 0 To 15; $MaxRecords-1
 	$CurrentPage=$i
 	_WinAPI_SetFilePointerEx($hFile, $i*$Record_Size, $FILE_BEGIN)
 	If $i = $MaxRecords-1 Then $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
@@ -217,13 +231,24 @@ EndIf
 $MFTReferences = _ArrayUnique($MFTReferences, 0, 0, 0, $ARRAYUNIQUE_NOCOUNT, $ARRAYUNIQUE_MATCH)
 If $VerboseOn > 0 Then ConsoleWrite("Accepted USNs: " & _ArrayToString($MFTReferences, ", ") & @CRLF)
 For $i = 0 To UBound($MFTReferences)-1
-  ConsoleWrite(MftRef2Name($MFTReferences[$i]) & @CRLF)
+  $FullFileName = MftRef2Name($MFTReferences[$i])
+  If (StringLen($OutputToFile) > 0) Then
+    FileWriteLine($OutputFile, $FullFileName)
+  Else
+    ConsoleWrite($FullFileName & @CRLF)
+  EndIf
   Sleep($CPUThrottle)
 Next
 
 If $VerboseOn > 1 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, @CRLF) & @CRLF)
 If $VerboseOn > 1 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, @CRLF) & @CRLF)
 If $VerboseOn > 1 Then ConsoleWrite("MftRefFullNames: " & _ArrayToString($MftRefFullNames, @CRLF) & @CRLF)
+
+; Close the output file
+If (StringLen($OutputToFile) > 0) Then
+  FileFlush($OutputFile)
+  FileClose($OutputFile)
+EndIf
 
 _WinAPI_CloseHandle($hFile)
 
@@ -408,13 +433,14 @@ Func MftRef2Name($IndexNumber)
       _ArrayAdd($MftRefFullNames, $BottomRef & ":" & $ResolvedPath)
     EndIf
 
-  	Return $TargetDrive & "\" & $ResolvedPath & "\" & $FileName
+  	Return StringReplace($TargetDrive & "\" & $ResolvedPath & "\" & $FileName, "\\", "\")
   EndIf
 EndFunc
 
 Func HelpMessage()
   ConsoleWrite($MyName & " " & $MyVersion & @CRLF & @CRLF)
-  ConsoleWrite("  " & $MyName & ".exe [-h|-l|-v|-V] [-m num] Volume" & @CRLF)
+  ConsoleWrite("  " & $MyName & ".exe [-h|-l|-v|-V] [-m num] [-a file|-o file] Volume" & @CRLF)
+  ConsoleWrite("     -a file Append changed file list to file." & @CRLF)
   ConsoleWrite("     -h      Show this help message and quit" & @CRLF)
   ConsoleWrite("     -l      Use longer sleep cycles to reduce CPU usage and the expense of the" & @CRLF)
   ConsoleWrite("             process taking longer.  You can use this switch twice to further" & @CRLF)
@@ -425,6 +451,7 @@ Func HelpMessage()
   ConsoleWrite("             ignored as it is assumed that the changes they represent have" & @CRLF)
   ConsoleWrite("             already been captured by previous backup runs." & @CRLF)
   ConsoleWrite("     -v      Enable verbose output.  Use twice for more verbose output." & @CRLF)
+  ConsoleWrite("     -o file Output changed file list to file." & @CRLF)
   ConsoleWrite("     -V      Output version and quit" & @CRLF)
   ConsoleWrite("     Volume  The volume to extract the USN Journal from" & @CRLF & @CRLF)
 EndFunc

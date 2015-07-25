@@ -21,7 +21,10 @@ For example, if there are 50 changed files in the same directory that is 3 level
 
 ## Usage
 ```
-  BackupQueueFromUSNJournal.exe [-h|-l|-v|-V] [-m num] Volume
+BackupQueueFromUSNJournal 1.0.0.0
+
+  BackupQueueFromUSNJournal.exe [-h|-l|-v|-V] [-m num] [-a file|-o file] Volume
+     -a file Append changed file list to file.
      -h      Show this help message and quit
      -l      Use longer sleep cycles to reduce CPU usage and the expense of the
              process taking longer.  You can use this switch twice to further
@@ -31,6 +34,9 @@ For example, if there are 50 changed files in the same directory that is 3 level
              Basically, all journal entries before the specified num will be
              ignored as it is assumed that the changes they represent have
              already been captured by previous backup runs.
+     -r      Output file paths relative to the volume root.
+     -o file Output changed file list to file.
+     -u      Use Unix (/) instead of Windows (\) path separator.
      -v      Enable verbose output.  Use twice for more verbose output.
      -V      Output version and quit
      Volume  The volume to extract the USN Journal from

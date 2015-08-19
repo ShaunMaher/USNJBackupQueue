@@ -2,7 +2,7 @@
 #AutoIt3Wrapper_Change2CUI=y
 #AutoIt3Wrapper_Res_Comment=CLI Parser for $UsnJrnl (NTFS)
 #AutoIt3Wrapper_Res_Description=CLI Parser for $UsnJrnl (NTFS)
-#AutoIt3Wrapper_Res_Fileversion=1.0.0.0
+#AutoIt3Wrapper_Res_Fileversion=1.0.0.1
 #AutoIt3Wrapper_Res_requestedExecutionLevel=asInvoker
 #EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
 ;
@@ -43,7 +43,7 @@
 #Include "MftRef2Name_Functions.au3"
 
 Global $MyName = "BackupQueueFromUSNJournal"
-Global $MyVersion = "1.0.0.0"
+Global $MyVersion = "1.0.0.1"
 Global $DateTimeFormat, $TimestampPrecision
 Global $PrecisionSeparator = "."
 Global $de = "|"
@@ -58,10 +58,12 @@ Global $MFTReferences[2]
 Global $MftRefNames[2]
 Global $MftRefFullNames[2]
 Global $MftRefParents[2]
+Global $MaxUSNEntriesToProcess = 0
 Global $MaxUSN = 0
 Global $MinUSN = 0
 Global $FirstUSN = 0
 Global $OutputToFile = ""
+Global $TimeLimit = 31557600
 Global $AppendToOutputFile = 2  ; 1 = Append, 2 = Overwrite
 Global $OutputFileEncoding = 0  ;32 = Unicode, 0 = UTF8
 Global $PathSeparator = "\"
@@ -96,10 +98,20 @@ If ($cmdline[0] > 0) Then
         ConsoleWriteError("Error: The value specified for the -m switch must be a number." & @CRLF)
         Exit
       EndIf
+    ElseIf $cmdline[$i] = "-M" Then
+      If StringIsDigit($cmdline[$i + 1]) Then
+        $MaxUSNEntriesToProcess = $cmdline[$i + 1]
+      Else
+        ConsoleWriteError("Error: The value specified for the -M switch must be a number." & @CRLF)
+        Exit
+      EndIf
     ElseIf $cmdline[$i] = "-r" Then
       $RelativePaths = True
     ElseIf $cmdline[$i] = "-o" Then
       $OutputToFile = $cmdline[$i + 1]
+    ElseIf $cmdline[$i] = "-t"
+      $TimeLimit = $cmdline[$i + 1]
+      ConsoleWriteError ("Sorry.  The Time Limit feature isn't implemented yet." & @CRLF)
     ElseIf $cmdline[$i] = "-u" Then
         $PathSeparator = "/"
     ElseIf $cmdline[$i] = "/?" Or $cmdline[$i] = "/h" Or $cmdline[$i] = "-h" Or $cmdline[$i] = "-?" Then
@@ -126,6 +138,8 @@ Else
   ;For debugging in GUI
   $TargetDrive = "E:"
   $VerboseOn = 1
+  $MinUSN = 524988
+  $MaxUSNEntriesToProcess = 1084014
 EndIf
 
 ; Input validation - Ensure target volume exists
@@ -155,6 +169,58 @@ If (StringInStr($FSUTILResult, "First Usn") < 1) Then
   Exit
 Else
   If $VerboseOn > 0 Then ConsoleWrite("USN Journal is enabled for " & $TargetDrive & "." & @CRLF)
+  ;TODO: We can check from the fsutil output if $MinUSN is still in the journal
+  ; and if the most recent USN is way too far ahead to make the rest of the USN
+  ; processing worth while.
+  For $Line In StringSplit($FSUTILResult, @CRLF)
+    If (StringInStr($Line, "First Usn") > 0) Then
+      $FirstUSN = (StringSplit($Line, ":"))[2]
+      If ((StringLen($FirstUSN) > 0) And (StringInStr($FirstUSN, "0x") > 0)) Then
+        $FirstUSN = StringReplace($FirstUSN, " ", "")
+        $FirstUSN = StringReplace($FirstUSN, "0x", "")
+        $FirstUSN = Dec($FirstUSN)
+      Else
+        $FirstUSN = 20
+      EndIf
+    ElseIf (StringInStr($Line, "Next Usn") > 0) Then
+      $MaxUSN = (StringSplit($Line, ":"))[2]
+      If ((StringLen($MaxUSN) > 0) And (StringInStr($MaxUSN, "0x") > 0)) Then
+        $MaxUSN = StringReplace($MaxUSN, " ", "")
+        $MaxUSN = StringReplace($MaxUSN, "0x", "")
+        $MaxUSN = Dec($MaxUSN)
+      Else
+        $MaxUSN = 20
+      EndIf
+    EndIf
+  Next
+EndIf
+
+; If the MinUSN (-m) no longer exists in the journal, exit.
+If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
+  ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
+  ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
+  ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+  ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
+  ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
+  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+  Exit
+EndIf
+
+; If there are more than MaxUSNEntriesToProcess (-M) entries in the journal, exit.
+If ((($MaxUSN - $MinUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN > 0)) Then
+  ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
+  ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
+  ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+  ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF & @CRLF)
+  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+  Exit
+ElseIf ((($MaxUSN - $FirstUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN = 0)) Then
+  ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
+  ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
+  ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+  ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF & @CRLF)
+  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+  Exit
 EndIf
 
 ; We need ExtractUsnJrnl.exe.  Make sure it exists.
@@ -208,7 +274,9 @@ If $hFile = 0 Then
 EndIf
 $InputFileSize = _WinAPI_GetFileSizeEx($hFile)
 $MaxRecords = Ceiling($InputFileSize/$Record_Size)
-For $i = 0 To 15; $MaxRecords-1
+For $i = 0 To $MaxRecords-1
+  ; TODO: Time limiting code here
+
 	$CurrentPage=$i
 	_WinAPI_SetFilePointerEx($hFile, $i*$Record_Size, $FILE_BEGIN)
 	If $i = $MaxRecords-1 Then $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
@@ -224,7 +292,8 @@ ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
 ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
 
 ; If $MinUSN < $FirstUSN then there are gaps in the journal between the
-; last time we ran and now.  DO A FULL BACKUP!
+; last time we ran and now (somehow missed by the check earlier).  DO A FULL
+; BACKUP!
 If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
   ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
   ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
@@ -462,9 +531,18 @@ Func HelpMessage()
   ConsoleWrite("             likely be the 'Maximum Found USN' from the previous run." & @CRLF)
   ConsoleWrite("             Basically, all journal entries before the specified num will be" & @CRLF)
   ConsoleWrite("             ignored as it is assumed that the changes they represent have" & @CRLF)
-  ConsoleWrite("             already been captured by previous backup runs." & @CRLF)
+  ConsoleWrite("             already been captured by previous backup runs.  If unspecified" & @CRLF)
+  ConsoleWrite("             the lowest numbered journal entry is used." & @CRLF)
+  ConsoleWrite("     -M num  Maximum number of jounal entries between the first acceptable" & @CRLF)
+  ConsoleWrite("             entry (see '-m' above) and the last entry in the journal. If there" & @CRLF)
+  ConsoleWrite("             are more than num entries, abort and suggest running a full backup" & @CRLF)
+  ConsoleWrite("             Not yet properly tested." & @CRLF)
   ConsoleWrite("     -r      Output file paths relative to the volume root." & @CRLF)
-  ConsoleWrite("     -o file Output changed file list to file." & @CRLF)
+  ConsoleWrite("     -o file Output changed file list to file.  If file already exists it will be" & @CRLF)
+  ConsoleWrite("             overwritten" & @CRLF)
+  ConsoleWrite("     -t sec  Time limit.  Don't spend more the sec seconds extracting values" & @CRLF)
+  ConsoleWrite("             before aborting and suggesting a full backup instead.  Not yet" & @CRLF)
+  ConsoleWrite("             implemented." & @CRLF)
   ConsoleWrite("     -u      Use Unix (/) instead of Windows (\) path separator." & @CRLF)
   ConsoleWrite("     -v      Enable verbose output.  Use twice for more verbose output." & @CRLF)
   ConsoleWrite("     -V      Output version and quit" & @CRLF)

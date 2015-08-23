@@ -21,7 +21,7 @@ For example, if there are 50 changed files in the same directory that is 3 level
 
 ## Usage
 ```
-BackupQueueFromUSNJournal 1.0.0.0
+BackupQueueFromUSNJournal 1.0.0.2
 
   BackupQueueFromUSNJournal.exe [-h|-l|-v|-V] [-m num] [-a file|-o file] Volume
      -a file Append changed file list to file.
@@ -33,9 +33,25 @@ BackupQueueFromUSNJournal 1.0.0.0
              likely be the 'Maximum Found USN' from the previous run.
              Basically, all journal entries before the specified num will be
              ignored as it is assumed that the changes they represent have
-             already been captured by previous backup runs.
+             already been captured by previous backup runs.  If unspecified
+             the lowest numbered journal entry is used.
+     -M num  Maximum number of jounal entries between the first acceptable
+             entry (see '-m' above) and the last entry in the journal. If there
+             are more than num entries, abort and suggest running a full backup
+             Not yet implemented.
+     -o file Output changed file list to file.  If file already exists it will be
+             overwritten
+     -p      Include the parent directories of each object in the output list.
      -r      Output file paths relative to the volume root.
-     -o file Output changed file list to file.
+     -R path Output file paths relative to the volume root and prefixed with
+             path.  This might be useful if you want to create a full path in
+             UNC format or reference a VSS snapshot via
+             \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyXXX
+     -S      Exclude files in the 'System Volume Information' directory.
+     -T      Exclude files in the '$RECYCLE.BIN' directory.
+     -t sec  Time limit.  Don't spend more the sec seconds extracting values
+             before aborting and suggesting a full backup instead.  Not yet
+             implemented.
      -u      Use Unix (/) instead of Windows (\) path separator.
      -v      Enable verbose output.  Use twice for more verbose output.
      -V      Output version and quit

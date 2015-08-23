@@ -2,7 +2,7 @@
 #AutoIt3Wrapper_Change2CUI=y
 #AutoIt3Wrapper_Res_Comment=CLI Parser for $UsnJrnl (NTFS)
 #AutoIt3Wrapper_Res_Description=CLI Parser for $UsnJrnl (NTFS)
-#AutoIt3Wrapper_Res_Fileversion=1.0.0.1
+#AutoIt3Wrapper_Res_Fileversion=1.0.0.2
 #AutoIt3Wrapper_Res_requestedExecutionLevel=asInvoker
 #EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
 ;
@@ -43,7 +43,7 @@
 #Include "MftRef2Name_Functions.au3"
 
 Global $MyName = "BackupQueueFromUSNJournal"
-Global $MyVersion = "1.0.0.1"
+Global $MyVersion = "1.0.0.2"
 Global $DateTimeFormat, $TimestampPrecision
 Global $PrecisionSeparator = "."
 Global $de = "|"
@@ -591,7 +591,7 @@ Func HelpMessage()
   ConsoleWrite("     -r      Output file paths relative to the volume root." & @CRLF)
   ConsoleWrite("     -R path Output file paths relative to the volume root and prefixed with" & @CRLF)
   ConsoleWrite("             path.  This might be useful if you want to create a full path in" & @CRLF)
-  ConsoleWrite("             UNC format or reference a VSS snapshot via" & @CRLF
+  ConsoleWrite("             UNC format or reference a VSS snapshot via" & @CRLF)
   ConsoleWrite("             \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyXXX" & @CRLF)
   ConsoleWrite("     -S      Exclude files in the 'System Volume Information' directory." & @CRLF)
   ConsoleWrite("     -T      Exclude files in the '$RECYCLE.BIN' directory." & @CRLF)

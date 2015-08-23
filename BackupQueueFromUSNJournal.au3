@@ -68,21 +68,26 @@ Global $AppendToOutputFile = 2  ; 1 = Append, 2 = Overwrite
 Global $OutputFileEncoding = 0  ;32 = Unicode, 0 = UTF8
 Global $PathSeparator = "\"
 Global $RelativePaths = False
+Global $RelativePathPrefix = ""
+Global $IncludeParents = False
+Global $IgnoreSysVolInfo = False
+Global $IgnoreRecycleBin = False
+Global $OutputEntries[1]
 
 ; Command line argument processing
 If ($cmdline[0] > 0) Then
   For $i = 1 To $cmdline[0]
-    If $cmdline[$i] = "-a" Then
+    If $cmdline[$i] == "-a" Then
       $AppendToOutputFile = 1
       $OutputToFile = $cmdline[$i + 1]
-    ElseIf $cmdline[$i] = "-v" Then
+    ElseIf $cmdline[$i] == "-v" Then
       $VerboseOn = $VerboseOn + 1
       If ($VerboseOn = 1) Then
         ConsoleWrite("Turning on verbose output" & @CRLF)
       Else
         ConsoleWrite("Increasing output verbosity" & @CRLF)
       EndIf
-    ElseIf $cmdline[$i] = "-V" Then
+    ElseIf $cmdline[$i] == "-V" Then
       ConsoleWrite($MyName & " " & $MyVersion & @CRLF)
       Exit
     ElseIf $cmdline[$i] = "-l" Then
@@ -91,28 +96,37 @@ If ($cmdline[0] > 0) Then
       Else
         $CPUThrottle = 200
       EndIf
-    ElseIf $cmdline[$i] = "-m" Then
+    ElseIf $cmdline[$i] == "-m" Then
       If StringIsDigit($cmdline[$i + 1]) Then
         $MinUSN = $cmdline[$i + 1]
       Else
         ConsoleWriteError("Error: The value specified for the -m switch must be a number." & @CRLF)
         Exit
       EndIf
-    ElseIf $cmdline[$i] = "-M" Then
+    ElseIf $cmdline[$i] == "-M" Then
       If StringIsDigit($cmdline[$i + 1]) Then
         $MaxUSNEntriesToProcess = $cmdline[$i + 1]
       Else
         ConsoleWriteError("Error: The value specified for the -M switch must be a number." & @CRLF)
         Exit
       EndIf
-    ElseIf $cmdline[$i] = "-r" Then
+    ElseIf $cmdline[$i] == "-p" Then
+        $IncludeParents = True
+    ElseIf $cmdline[$i] == "-r" Then
       $RelativePaths = True
-    ElseIf $cmdline[$i] = "-o" Then
+    ElseIf $cmdline[$i] == "-R" Then
+      $RelativePaths = True
+      $RelativePathPrefix = $cmdline[$i + 1]
+    ElseIf $cmdline[$i] == "-o" Then
       $OutputToFile = $cmdline[$i + 1]
-    ElseIf $cmdline[$i] = "-t"
+    ElseIf $cmdline[$i] == "-S" Then
+      $IgnoreSysVolInfo = True
+      ElseIf $cmdline[$i] == "-T" Then
+        $IgnoreRecycleBin = True
+    ElseIf $cmdline[$i] == "-t" Then
       $TimeLimit = $cmdline[$i + 1]
       ConsoleWriteError ("Sorry.  The Time Limit feature isn't implemented yet." & @CRLF)
-    ElseIf $cmdline[$i] = "-u" Then
+    ElseIf $cmdline[$i] == "-u" Then
         $PathSeparator = "/"
     ElseIf $cmdline[$i] = "/?" Or $cmdline[$i] = "/h" Or $cmdline[$i] = "-h" Or $cmdline[$i] = "-?" Then
       HelpMessage()
@@ -194,6 +208,8 @@ Else
     EndIf
   Next
 EndIf
+
+ConsoleWrite("RelativePathPrefix: " & $RelativePathPrefix & @CRLF)
 
 ; If the MinUSN (-m) no longer exists in the journal, exit.
 If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
@@ -305,12 +321,44 @@ EndIf
 ; performance bottleneck and needs more attention
 $MFTReferences = _ArrayUnique($MFTReferences, 0, 0, 0, $ARRAYUNIQUE_NOCOUNT, $ARRAYUNIQUE_MATCH)
 If $VerboseOn > 0 Then ConsoleWrite("Accepted USNs: " & _ArrayToString($MFTReferences, ", ") & @CRLF)
-For $i = 0 To UBound($MFTReferences)-1
-  $FullFileName = MftRef2Name($MFTReferences[$i])
-  If (StringLen($OutputToFile) > 0) Then
-    FileWriteLine($OutputFile, $FullFileName)
-  Else
-    ConsoleWrite($FullFileName & @CRLF)
+For $RefIndex = 1 To UBound($MFTReferences)-1
+  $FullFileName = MftRef2Name($MFTReferences[$RefIndex])
+  If ($IgnoreSysVolInfo) And (StringInStr($FullFileName, "System Volume Information") > 0) And (StringInStr($FullFileName, "System Volume Information") < 5) Then
+    ContinueLoop
+  EndIf
+  If ($IgnoreRecycleBin) And (StringInStr($FullFileName, "$RECYCLE.BIN") > 0) And (StringInStr($FullFileName, "$RECYCLE.BIN") < 5) Then
+    ContinueLoop
+  EndIf
+  If ($IncludeParents) Then
+    $Parents = StringSplit($FullFileName, $PathSeparator)
+    $ParentTrail = $RelativePathPrefix
+    For $ParentIndex = 1 To UBound($Parents)-2
+      If (StringLen($Parents[$ParentIndex]) < 1) Then
+        ContinueLoop
+      EndIf
+      If (StringLen($ParentTrail) > 1) Then
+        $ParentTrail = $ParentTrail & $PathSeparator & $Parents[$ParentIndex]
+      Else
+        $ParentTrail = $ParentTrail & $Parents[$ParentIndex]
+      EndIf
+      If (_ArraySearch($OutputEntries, $ParentTrail, 0, 0, 0, 2) < 1) Then
+        If (StringLen($OutputToFile) > 0) Then
+          FileWriteLine($OutputFile, $ParentTrail)
+        Else
+          ConsoleWrite($ParentTrail & @CRLF)
+        EndIf
+        _ArrayAdd($OutputEntries, $ParentTrail)
+      EndIf
+    Next
+  EndIf
+
+  If (_ArraySearch($OutputEntries, $FullFileName, 0, 0, 0, 2) < 1) Then
+    If (StringLen($OutputToFile) > 0) Then
+      FileWriteLine($OutputFile, $FullFileName)
+    Else
+      ConsoleWrite($FullFileName & @CRLF)
+    EndIf
+    _ArrayAdd($OutputEntries, $FullFileName)
   EndIf
   Sleep($CPUThrottle)
 Next
@@ -496,7 +544,7 @@ Func MftRef2Name($IndexNumber)
       		_DecodeMFTRecord($NewRecord,2)
       		$TmpRef = _GetParent()
       		If @error then ExitLoop
-          ConsoleWrite($TestParentRef & " -> " & $TmpRef[0] & @CRLF)
+          If $VerboseOn > 1 Then ConsoleWrite($TestParentRef & " -> " & $TmpRef[0] & @CRLF)
           _ArrayAdd($MftRefParents, $TestParentRef & ":" & $TmpRef[0])
           _ArrayAdd($MftRefNames, $TestParentRef & ":" & $TmpRef[1])
       		$TestFileName = $TmpRef[1]
@@ -510,7 +558,7 @@ Func MftRef2Name($IndexNumber)
     EndIf
 
     If ($RelativePaths) Then
-      $FullFileName = $ResolvedPath & $PathSeparator & $FileName
+      $FullFileName = $RelativePathPrefix & $ResolvedPath & $PathSeparator & $FileName
     Else
       $FullFileName = $TargetDrive & $PathSeparator & $ResolvedPath & $PathSeparator & $FileName
     EndIf
@@ -536,10 +584,17 @@ Func HelpMessage()
   ConsoleWrite("     -M num  Maximum number of jounal entries between the first acceptable" & @CRLF)
   ConsoleWrite("             entry (see '-m' above) and the last entry in the journal. If there" & @CRLF)
   ConsoleWrite("             are more than num entries, abort and suggest running a full backup" & @CRLF)
-  ConsoleWrite("             Not yet properly tested." & @CRLF)
-  ConsoleWrite("     -r      Output file paths relative to the volume root." & @CRLF)
+  ConsoleWrite("             Not yet implemented." & @CRLF)
   ConsoleWrite("     -o file Output changed file list to file.  If file already exists it will be" & @CRLF)
   ConsoleWrite("             overwritten" & @CRLF)
+  ConsoleWrite("     -p      Include the parent directories of each object in the output list." & @CRLF)
+  ConsoleWrite("     -r      Output file paths relative to the volume root." & @CRLF)
+  ConsoleWrite("     -R path Output file paths relative to the volume root and prefixed with" & @CRLF)
+  ConsoleWrite("             path.  This might be useful if you want to create a full path in" & @CRLF)
+  ConsoleWrite("             UNC format or reference a VSS snapshot via" & @CRLF
+  ConsoleWrite("             \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyXXX" & @CRLF)
+  ConsoleWrite("     -S      Exclude files in the 'System Volume Information' directory." & @CRLF)
+  ConsoleWrite("     -T      Exclude files in the '$RECYCLE.BIN' directory." & @CRLF)
   ConsoleWrite("     -t sec  Time limit.  Don't spend more the sec seconds extracting values" & @CRLF)
   ConsoleWrite("             before aborting and suggesting a full backup instead.  Not yet" & @CRLF)
   ConsoleWrite("             implemented." & @CRLF)

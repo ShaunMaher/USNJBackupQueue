@@ -2,7 +2,7 @@
 #AutoIt3Wrapper_Change2CUI=y
 #AutoIt3Wrapper_Res_Comment=CLI Parser for $UsnJrnl (NTFS)
 #AutoIt3Wrapper_Res_Description=CLI Parser for $UsnJrnl (NTFS)
-#AutoIt3Wrapper_Res_Fileversion=1.0.0.1
+#AutoIt3Wrapper_Res_Fileversion=1.0.0.3
 #AutoIt3Wrapper_Res_requestedExecutionLevel=asInvoker
 #EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
 ;
@@ -26,6 +26,9 @@
 ; use it.  You won't get any output.  You need to either compile the script into
 ; an executable using Aut2exe.exe with the "/console" switch or run this script
 ; from within the AutoIt3 provided SciTE-Lite editor.
+
+; To create a stand alone executable:
+;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.3 /productversion 1.0.0.3 /productname BackupQueueFromUSNJournal
 ;
 ; Finally, my excuse for code in this script being ugly and inefficient is that
 ; this is the first time I have ever worked with AutoIt code and there are large
@@ -43,7 +46,7 @@
 #Include "MftRef2Name_Functions.au3"
 
 Global $MyName = "BackupQueueFromUSNJournal"
-Global $MyVersion = "1.0.0.1"
+Global $MyVersion = "1.0.0.3"
 Global $DateTimeFormat, $TimestampPrecision
 Global $PrecisionSeparator = "."
 Global $de = "|"

@@ -11,17 +11,20 @@ So you don't repeat the mistake I made, because this is a console script, you ca
 Finally, my excuse for code in this script being ugly and inefficient is that this is the first time I have ever worked with AutoIt code and there are large portions of Joakim's code that I don't fully understand.  Sorry.
 
 ## Limitations
-### Incomplete
-Not all of the basics are connected up and operating yet.  It's close to being a functional prototype.
+### Completeness
+Every feature in the Usage section below has been implemented, except the time limit (-t).
+
+### Testing
+I haven't extensively tested every feature and function yet but it passes all of the basic functionallity tests I have thrown at it so far with my test systems.
 
 ### Performance
-The functions used to translate $Mft references into full file names were written by the original author to run once and exit.  I think I can improve performance by adding some caching of lookups that have already been completed so every request doesn't need to work out every step in the parent/child relationship from scratch each time.
+The functions used to translate $Mft references into full file names were written by the original author to run once and exit so they are possibly not as efficient fo multiple lookups as they could be.  I have worked around the latency that these lookups take by caching every lookup we already know the answer to (from previous lookups and from the USN Journal itself).
 
-For example, if there are 50 changed files in the same directory that is 3 levels deep into the filesystem hierachy (e.g. E:\folder\folder\folder\file1, E:\folder\folder\folder\file2, etc.) then the code as it stands makes 200 lookups (50 files * (3 directory levels + the file itself)) to the $Mft.  If we could cache the $Mft reference for "E:\folder\folder\folder\" though we would only need 54 lookups (4 to resolve "E:\folder\folder\folder\" the first time + 50 for the files themselves).
+I have recently added some code that skips journal pages if it KNOWS the "first acceptable journal entry" (-m) is not going to be in those pages.  In cases where the journal is very large but contains mostly entries that are older than the "first acceptable journal entry" (because they were processed on a previous occasion) this greatly reduces processing time.
 
 ## Usage
 ```
-BackupQueueFromUSNJournal 1.0.0.2
+BackupQueueFromUSNJournal 1.0.0.3
 
   BackupQueueFromUSNJournal.exe [-h|-l|-v|-V] [-m num] [-a file|-o file] Volume
      -a file Append changed file list to file.

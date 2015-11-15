@@ -2,7 +2,7 @@
 #AutoIt3Wrapper_Change2CUI=y
 #AutoIt3Wrapper_Res_Comment=CLI Parser for $UsnJrnl (NTFS)
 #AutoIt3Wrapper_Res_Description=CLI Parser for $UsnJrnl (NTFS)
-#AutoIt3Wrapper_Res_Fileversion=1.0.0.2
+#AutoIt3Wrapper_Res_Fileversion=1.0.0.1
 #AutoIt3Wrapper_Res_requestedExecutionLevel=asInvoker
 #EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
 ;
@@ -43,7 +43,7 @@
 #Include "MftRef2Name_Functions.au3"
 
 Global $MyName = "BackupQueueFromUSNJournal"
-Global $MyVersion = "1.0.0.2"
+Global $MyVersion = "1.0.0.1"
 Global $DateTimeFormat, $TimestampPrecision
 Global $PrecisionSeparator = "."
 Global $de = "|"
@@ -290,17 +290,47 @@ If $hFile = 0 Then
 EndIf
 $InputFileSize = _WinAPI_GetFileSizeEx($hFile)
 $MaxRecords = Ceiling($InputFileSize/$Record_Size)
-For $i = 0 To $MaxRecords-1
+$MaxUSN = 0
+$CurrentPage = 0
+;For $CurrentPage = 0 To $MaxRecords-1
+ConsoleWrite("Max Records: " & $MaxRecords & @CRLF)
+ConsoleWrite("Input File Size: " & $InputFileSize & @CRLF)
+While $CurrentPage < $MaxRecords-1
   ; TODO: Time limiting code here
 
-	$CurrentPage=$i
-	_WinAPI_SetFilePointerEx($hFile, $i*$Record_Size, $FILE_BEGIN)
-	If $i = $MaxRecords-1 Then $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
+  ; Each page is 4096 bytes long and, as far as I can tell, contains a maximum
+  ; of 57 records.  These records aren't sequential but are increasing by 72
+  ; each time.  57*72 almost equals the page size of 4096 so there's probably a
+  ; connection I'm not quite getting.  Anyway, based on the highest USN we have
+  ; found so far can we (with a 10% safety net), skip ahead some pages?  Note
+  ; that even if we skip ahead we still process one page this loop so we don't
+  ; do multiple skips without actually checking the journal to make sure our
+  ; math is alligned with reality.
+  If (($CurrentPage > 0) And ($MaxUSN > 0)) Then
+    If (($MaxUSN + (110 * 57 * 72)) < $MinUSN) Then
+      If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 100) & " (100 pages)." & @CRLF)
+      $CurrentPage = $CurrentPage + 100
+    ElseIf (($MaxUSN + (55 * 57 * 72)) < $MinUSN) Then
+      If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 50) & " (50 pages)." & @CRLF)
+      $CurrentPage = $CurrentPage + 50
+    ElseIf (($MaxUSN + (11 * 57 * 72)) < $MinUSN) Then
+      If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 10) & " (10 pages)." & @CRLF)
+      $CurrentPage = $CurrentPage + 10
+    ElseIf (($MaxUSN + (5.5 * 57 * 72)) < $MinUSN) Then
+      If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 10) & " (5 pages)." & @CRLF)
+      $CurrentPage = $CurrentPage + 5
+    EndIf
+  EndIf
+
+	_WinAPI_SetFilePointerEx($hFile, $CurrentPage*$Record_Size, $FILE_BEGIN)
+	If $CurrentPage = $MaxRecords-1 Then $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
 	_WinAPI_ReadFile($hFile, DllStructGetPtr($tBuffer), $Record_Size, $nBytes)
 	$RawPage = DllStructGetData($tBuffer, 1)
 	_UsnProcessPage(StringMid($RawPage,3))
   Sleep($CPUThrottle)
-Next
+  $CurrentPage = $CurrentPage + 1
+Wend
+;Next
 
 ConsoleWrite("Decoding finished" & @CRLF)
 ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
@@ -430,14 +460,15 @@ Func _UsnDecodeRecord($Record)
     $FirstUSN = $UsnJrnlUsn
   EndIf
 
+  ; We will need the maximum USN value so we know where to kick off the next run
+  If $VerboseOn > 1 Then ConsoleWrite("This USN: " & $UsnJrnlUsn & @CRLF)
+  If ($UsnJrnlUsn > $MaxUSN) Then
+    $MaxUSN = $UsnJrnlUsn
+  EndIf
+
   ; If this USN is lower then the MinUSN then this change has already been
   ;  actioned on a previous backup run
   If (($UsnJrnlUsn > $MinUSN) Or ($MinUSN = 0)) Then
-    ; We will need the maximum USN value so we know where to kick off the next run
-    If ($UsnJrnlUsn > $MaxUSN) Then
-      $MaxUSN = $UsnJrnlUsn
-    EndIf
-
     ; Here we have a file name, a file reference number and a parent reference
     ;  number, we may as well add them to the cache.  MftRef2Name might find
     ;  them useful.

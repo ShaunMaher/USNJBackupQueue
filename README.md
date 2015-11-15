@@ -8,6 +8,11 @@ Yes, rsync only copies files that have been changed by default, the problem aris
 
 So you don't repeat the mistake I made, because this is a console script, you can't simply double click the .au3 file or run "AutoIt3.exe FileName.au3" to use it.  You won't get any output.  You need to either compile the script into an executable using Aut2exe.exe with the "/console" switch or run this script from within the AutoIt3 provided SciTE-Lite editor.
 
+To create a stand alone executable:
+```
+"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.3 /productversion 1.0.0.3 /productname BackupQueueFromUSNJournal
+```
+
 Finally, my excuse for code in this script being ugly and inefficient is that this is the first time I have ever worked with AutoIt code and there are large portions of Joakim's code that I don't fully understand.  Sorry.
 
 ## Limitations

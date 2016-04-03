@@ -2,7 +2,7 @@
 #AutoIt3Wrapper_Change2CUI=y
 #AutoIt3Wrapper_Res_Comment=CLI Parser for $UsnJrnl (NTFS)
 #AutoIt3Wrapper_Res_Description=CLI Parser for $UsnJrnl (NTFS)
-#AutoIt3Wrapper_Res_Fileversion=1.0.0.3
+#AutoIt3Wrapper_Res_Fileversion=1.0.0.4
 #AutoIt3Wrapper_Res_requestedExecutionLevel=asInvoker
 #EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
 ;
@@ -28,7 +28,7 @@
 ; from within the AutoIt3 provided SciTE-Lite editor.
 
 ; To create a stand alone executable:
-;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.3 /productversion 1.0.0.3 /productname BackupQueueFromUSNJournal
+;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.4 /productversion 1.0.0.3 /productname BackupQueueFromUSNJournal
 ;
 ; Finally, my excuse for code in this script being ugly and inefficient is that
 ; this is the first time I have ever worked with AutoIt code and there are large
@@ -42,11 +42,12 @@
 #include <GuiEdit.au3>
 #Include <FileConstants.au3>
 #Include <Array.au3>
+#Include <Date.au3>
 #Include "UsnJrnl2Csv_Functions.au3"
 #Include "MftRef2Name_Functions.au3"
 
 Global $MyName = "BackupQueueFromUSNJournal"
-Global $MyVersion = "1.0.0.3"
+Global $MyVersion = "1.0.0.4"
 Global $DateTimeFormat, $TimestampPrecision
 Global $PrecisionSeparator = "."
 Global $de = "|"
@@ -66,7 +67,7 @@ Global $MaxUSN = 0
 Global $MinUSN = 0
 Global $FirstUSN = 0
 Global $OutputToFile = ""
-Global $TimeLimit = 31557600
+Global $TimeLimit = 31557600 ; Not actually implemented
 Global $AppendToOutputFile = 2  ; 1 = Append, 2 = Overwrite
 Global $OutputFileEncoding = 0  ;32 = Unicode, 0 = UTF8
 Global $PathSeparator = "\"
@@ -75,10 +76,36 @@ Global $RelativePathPrefix = ""
 Global $IncludeParents = False
 Global $IgnoreSysVolInfo = False
 Global $IgnoreRecycleBin = False
+Global $ServiceMode = False
+; Global $ServiceCycleFrequency = 300000    ; Every 5 minutes
+Global $ServiceCycleFrequency = 15000    ; Every 15 seconds
+; Global $ServiceStartupDelay = 300000    ; 5 minutes
+Global $ServiceStartupDelay = 5000        ; 5 seconds
+Global $CachePurgeFrequency = 86400000    ; Daily
 Global $OutputEntries[1]
+Global $LastPageMaxUSN = 0
+Global $CurrentPage = 0
+
+; Load some default settings from the registry
+_LoadConfigFromRegistry("")
 
 ; Command line argument processing
 If ($cmdline[0] > 0) Then
+  ; Which volume are we to work on.  The Volume specified on the command line
+  ;  can be in either the for of "X:" or just "X".
+  $TargetDrive = ""
+  If (StringLen($cmdline[$cmdline[0]]) = 1) Then
+    $TargetDrive = $cmdline[$cmdline[0]] & ":"
+  ElseIf (StringLen($cmdline[$cmdline[0]]) = 2) And (StringRight($cmdline[$cmdline[0]], 1) = ":") Then
+    $TargetDrive = $cmdline[$cmdline[0]]
+  EndIf
+
+  ; Load the default settings for this specific volume from the registry.  These
+  ;  will override the default settings loaded earlier
+  _LoadConfigFromRegistry($TargetDrive)
+
+  ; Process the remaining command line arguments.  These will override settings
+  ;  found in the registry
   For $i = 1 To $cmdline[0]
     If $cmdline[$i] == "-a" Then
       $AppendToOutputFile = 1
@@ -96,8 +123,10 @@ If ($cmdline[0] > 0) Then
     ElseIf $cmdline[$i] = "-l" Then
       If ($CPUThrottle = 10) Then
         $CPUThrottle = 50
-      Else
+      ElseIf ($CPUThrottle = 50) Then
         $CPUThrottle = 200
+      Else
+        $CPUThrottle = 500
       EndIf
     ElseIf $cmdline[$i] == "-m" Then
       If StringIsDigit($cmdline[$i + 1]) Then
@@ -113,8 +142,10 @@ If ($cmdline[0] > 0) Then
         ConsoleWriteError("Error: The value specified for the -M switch must be a number." & @CRLF)
         Exit
       EndIf
+    ElseIf $cmdline[$i] == "+p" Then
+      $IncludeParents = True
     ElseIf $cmdline[$i] == "-p" Then
-        $IncludeParents = True
+      $IncludeParents = False
     ElseIf $cmdline[$i] == "-r" Then
       $RelativePaths = True
     ElseIf $cmdline[$i] == "-R" Then
@@ -122,28 +153,31 @@ If ($cmdline[0] > 0) Then
       $RelativePathPrefix = $cmdline[$i + 1]
     ElseIf $cmdline[$i] == "-o" Then
       $OutputToFile = $cmdline[$i + 1]
+    ElseIf $cmdline[$i] == "-service" Then
+        $ServiceMode = True
     ElseIf $cmdline[$i] == "-S" Then
       $IgnoreSysVolInfo = True
-      ElseIf $cmdline[$i] == "-T" Then
-        $IgnoreRecycleBin = True
+    ElseIf $cmdline[$i] == "+S" Then
+      $IgnoreSysVolInfo = False
+    ElseIf $cmdline[$i] == "-T" Then
+      $IgnoreRecycleBin = True
+    ElseIf $cmdline[$i] == "+T" Then
+      $IgnoreRecycleBin = False
     ElseIf $cmdline[$i] == "-t" Then
       $TimeLimit = $cmdline[$i + 1]
       ConsoleWriteError ("Sorry.  The Time Limit feature isn't implemented yet." & @CRLF)
+    ElseIf $cmdline[$i] == "+u" Then
+      $PathSeparator = "/"
     ElseIf $cmdline[$i] == "-u" Then
-        $PathSeparator = "/"
+      $PathSeparator = "\"
     ElseIf $cmdline[$i] = "/?" Or $cmdline[$i] = "/h" Or $cmdline[$i] = "-h" Or $cmdline[$i] = "-?" Then
       HelpMessage()
       Exit
     EndIf
   Next
 
-  ; The Volume specified on the command line can be in either the for of "X:" or
-  ; just "X".
-  If (StringLen($cmdline[$cmdline[0]]) = 1) Then
-    $TargetDrive = $cmdline[$cmdline[0]] & ":"
-  ElseIf (StringLen($cmdline[$cmdline[0]]) = 2) And (StringRight($cmdline[$cmdline[0]], 1) = ":") Then
-    $TargetDrive = $cmdline[$cmdline[0]]
-  Else
+  ; If we don't know which drive/volume to process we can't do anything
+  If (StringLen($TargetDrive) < 1) Then
     ConsoleWriteError("'" & $cmdline[$cmdline[0]] & "' is not a valid value for Volume." & @CRLF & @CRLF)
     HelpMessage()
     Exit
@@ -153,10 +187,12 @@ Else
   ;Exit
 
   ;For debugging in GUI
+  $CPUThrottle = 50
   $TargetDrive = "E:"
   $VerboseOn = 1
-  $MinUSN = 524988
+  $MinUSN = 1639344
   $MaxUSNEntriesToProcess = 1084014
+  $ServiceMode = True
 EndIf
 
 ; Input validation - Ensure target volume exists
@@ -172,244 +208,394 @@ If @error Then
 	Exit
 EndIf
 
-;TODO: Test that this works
-; Check that the target drive has the USN journal enabled and enable if
-; necessary
-Local $FSUTILPid = Run("fsutil usn queryjournal " & $TargetDrive, @ScriptDir, @SW_HIDE, $STDOUT_CHILD)
-ProcessWaitClose($FSUTILPid)
-Local $FSUTILResult = StdoutRead($FSUTILPid)
-If $VerboseOn > 0 Then ConsoleWrite($FSUTILResult)
-If (StringInStr($FSUTILResult, "First Usn") < 1) Then
-  ConsoleWriteError("The USN Journal is not enabled on " & $TargetDrive & "." & @CRLF & @CRLF)
-  ConsoleWriteError("On Windows 2008 and higher you can use the 'fsutil' tool to enable the USN Journal." & @CRLF & @CRLF)
-  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
-  Exit
-Else
-  If $VerboseOn > 0 Then ConsoleWrite("USN Journal is enabled for " & $TargetDrive & "." & @CRLF)
-  ;TODO: We can check from the fsutil output if $MinUSN is still in the journal
-  ; and if the most recent USN is way too far ahead to make the rest of the USN
-  ; processing worth while.
-  For $Line In StringSplit($FSUTILResult, @CRLF)
-    If (StringInStr($Line, "First Usn") > 0) Then
-      $FirstUSN = (StringSplit($Line, ":"))[2]
-      If ((StringLen($FirstUSN) > 0) And (StringInStr($FirstUSN, "0x") > 0)) Then
-        $FirstUSN = StringReplace($FirstUSN, " ", "")
-        $FirstUSN = StringReplace($FirstUSN, "0x", "")
-        $FirstUSN = Dec($FirstUSN)
-      Else
-        $FirstUSN = 20
+If ($ServiceMode) Then
+  ; We need to load the $MinUSN from the last time we ran from the registry
+  ;https://www.autoitscript.com/autoit3/docs/functions/RegRead.htm
+  Local $PotentialMinUSN = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "MinUSN")
+  If IsNumber($PotentialMinUSN) Then
+    If $VerboseOn > 0 Then ConsoleWrite("Minimum Acceped USN loaded from local registry: " & $PotentialMinUSN & @CRLF)
+    $MinUSN = $PotentialMinUSN
+  EndIf
+
+  ; Sleep for $ServiceStartupDelay
+  If $VerboseOn > 0 Then ConsoleWrite("Service startup delay: " & ($ServiceStartupDelay / 1000) & "s" & @CRLF)
+  Sleep($ServiceStartupDelay)
+
+  Local $LastCycle = 0
+  Local $LastCachePurge = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
+  Local $Now = 0
+
+  While (True)
+    ; Check the last run time against the current time
+    $Now = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
+
+    If $VerboseOn > 1 Then ConsoleWrite("LastCycle: " & $LastCycle & ", Now: " & $Now & @CRLF)
+    If (($LastCycle + ($ServiceCycleFrequency / 1000)) < $Now) Then
+      If $VerboseOn > 0 Then ConsoleWrite("Running _MainProcess" & @CRLF)
+      $LastCycle = $Now
+
+      ; Run the part that does the hard work
+      Local $MainProcessResult = _MainProcess()
+
+      If Not ($MainProcessResult) Then
+        ConsoleWriteError("TODO: Something in the _MainProcess failed.  We need to let the backup program know to run a full backup." & @CRLF)
       EndIf
-    ElseIf (StringInStr($Line, "Next Usn") > 0) Then
-      $MaxUSN = (StringSplit($Line, ":"))[2]
-      If ((StringLen($MaxUSN) > 0) And (StringInStr($MaxUSN, "0x") > 0)) Then
-        $MaxUSN = StringReplace($MaxUSN, " ", "")
-        $MaxUSN = StringReplace($MaxUSN, "0x", "")
-        $MaxUSN = Dec($MaxUSN)
-      Else
-        $MaxUSN = 20
-      EndIf
+
+      ; Cleanup variables so we're ready for the next cycle
+      ReDim $MFTReferences[2]
+      $MinUSN = $MaxUSN
+
+      ;TODO: Whereever we get the $MinUSN from, save it there now
+      ;https://www.autoitscript.com/autoit3/docs/functions/RegWrite.htm
+      RegWrite("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "MinUSN", "REG_QWORD", $MinUSN)
+
+      $LastCycle = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
     EndIf
-  Next
-EndIf
 
-ConsoleWrite("RelativePathPrefix: " & $RelativePathPrefix & @CRLF)
+    ; We don't want to purge these arrays every time because there is so much
+    ; usefull information in them.  Over time though they will start to contain
+    ; stale entries.
+    $Now = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
+    If $VerboseOn > 1 Then ConsoleWrite("LastCachePurge: " & $LastCachePurge & ", Now: " & $Now & @CRLF)
+    If (($LastCachePurge + ($CachePurgeFrequency / 1000)) < $Now) Then
+      If $VerboseOn > 0 Then ConsoleWrite("Purging $MFT Cache")
+      $LastCachePurge = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
+      ReDim $MftRefNames[2]
+      ReDim $MftRefFullNames[2]
+      ReDim $MftRefParents[2]
+    EndIf
 
-; If the MinUSN (-m) no longer exists in the journal, exit.
-If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
-  ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
-  ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
-  ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
-  ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
-  ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
-  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
-  Exit
-EndIf
+    ;TODO It would be great if we could sample the system CPU load and adjust
+    ; $CPUThrottle dynamically to limit our impact on the system.
+    ; https://www.autoitscript.com/forum/topic/90736-performance-counters-in-windows-measure-process-cpu-network-disk-usage/?page=1
 
-; If there are more than MaxUSNEntriesToProcess (-M) entries in the journal, exit.
-If ((($MaxUSN - $MinUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN > 0)) Then
-  ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
-  ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
-  ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
-  ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF & @CRLF)
-  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
-  Exit
-ElseIf ((($MaxUSN - $FirstUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN = 0)) Then
-  ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
-  ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
-  ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
-  ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF & @CRLF)
-  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
-  Exit
-EndIf
-
-; We need ExtractUsnJrnl.exe.  Make sure it exists.
-If FileExists(@ScriptDir & "\ExtractUsnJrnl\ExtractUsnJrnl.exe") Then
-  $ExtractUsnJrnlPath = @ScriptDir & "\ExtractUsnJrnl\"
-ElseIf FileExists(@ScriptDir & "\ExtractUsnJrnl.exe") Then
-  $ExtractUsnJrnlPath = @ScriptDir & "\"
+    Sleep(2000)
+  Wend
 Else
-  ConsoleWriteError("ExtractUsnJrnl.exe not found!" & @CRLF)
-  Exit
+  _MainProcess()
 EndIf
 
-; Need to set $File to USN Journal file path
-$File = $ExtractUsnJrnlPath & "\$UsnJrnl_$J.bin"
+Func _LoadConfigFromRegistry($TargetDrive)
+  Local $PotentialValue = False
 
-; Delete $File if it exists
-If FileExists($File) Then
-  If $VerboseOn > 0 Then ConsoleWrite("Deleting previously extracted USN Journal." & @CRLF)
-  FileDelete($File)
-EndIf
+  ;TODO: This is some ugly code!
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "VerboseOn")
+  If IsNumber($PotentialValue) And Not @error Then $VerboseOn = $PotentialValue
+  SetError(0)
 
-; If we're going to output to file, open the file for writing now
-If (StringLen($OutputToFile) > 0) Then
-  $OutputFile = FileOpen($OutputToFile, $OutputFileEncoding + $AppendToOutputFile)
-  If @error Then
-    ConsoleWriteError("Error creating: " & $OutputToFile & @CRLF)
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "CPUThrottle")
+  If IsNumber($PotentialValue) And Not @error Then $CPUThrottle = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "PathSeparator")
+  If IsString($PotentialValue) And Not @error Then $PathSeparator = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "IgnoreRecycleBin")
+  If IsNumber($PotentialValue) And Not @error Then
+    $IgnoreRecycleBin = False
+    If ($PotentialValue > 0) Then $IgnoreRecycleBin = True
+  EndIf
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "OutputToFile")
+  If IsString($PotentialValue) And Not @error Then $OutputToFile = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "IgnoreSysVolInfo")
+  If IsNumber($PotentialValue) And Not @error Then
+    $IgnoreSysVolInfo = False
+    If ($PotentialValue > 0) Then $IgnoreSysVolInfo = True
+  EndIf
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "RelativePaths")
+  If IsNumber($PotentialValue) And Not @error Then
+    $RelativePaths = False
+    If ($PotentialValue > 0) Then $RelativePaths = True
+  EndIf
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "RelativePathPrefix")
+  If IsString($PotentialValue) And Not @error Then $RelativePathPrefix = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "IncludeParents")
+  If IsNumber($PotentialValue) And Not @error Then
+    $RelativePaths = False
+    If ($PotentialValue > 0) Then $IncludeParents = True
+  EndIf
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "AppendToOutputFile")
+  If IsNumber($PotentialValue) And Not @error Then
+    $AppendToOutputFile = False
+    If ($PotentialValue > 0) Then $AppendToOutputFile = True
+  EndIf
+EndFunc
+
+Func _MainProcess()
+  ; Check that the target drive has the USN journal enabled.
+  Local $FSUTILPid = Run("fsutil usn queryjournal " & $TargetDrive, @ScriptDir, @SW_HIDE, $STDOUT_CHILD)
+  ProcessWaitClose($FSUTILPid)
+  Local $FSUTILResult = StdoutRead($FSUTILPid)
+  If $VerboseOn > 0 Then ConsoleWrite($FSUTILResult)
+  If (StringInStr($FSUTILResult, "First Usn") < 1) Then
+    ConsoleWriteError("The USN Journal is not enabled on " & $TargetDrive & "." & @CRLF & @CRLF)
+    ConsoleWriteError("On Windows 2008 and higher you can use the 'fsutil' tool to enable the USN Journal." & @CRLF & @CRLF)
+    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
     Exit
-  EndIf
-EndIf
-
-; Here we call the ExtractUsnJrnl.exe to extract a copt of the USN Journal from
-; the target drive.
-ConsoleWrite("Extracting USN Journal with ExtractUsnJrnl.exe" & @CRLF)
-Local $ExtractUsnJrnlPid = Run($ExtractUsnJrnlPath & "ExtractUsnJrnl.exe " & $TargetDrive, $ExtractUsnJrnlPath, @SW_HIDE, $STDOUT_CHILD)
-ProcessWaitClose($ExtractUsnJrnlPid)
-Local $ExtractUsnJrnlResult = StdoutRead($ExtractUsnJrnlPid)
-If $VerboseOn > 0 Then ConsoleWrite($ExtractUsnJrnlResult)
-
-If Not FileExists($File) Then
-	ConsoleWrite("Error: Could not find extracted USN Journal file.  Maybe ExtractUsnJrnl.exe failed." & @CRLF)
-	Exit
-EndIf
-$TimestampStart = @YEAR & "-" & @MON & "-" & @MDAY & "_" & @HOUR & "-" & @MIN & "-" & @SEC
-
-ConsoleWrite("Decoding $UsnJrnl info..." & @CRLF)
-$tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
-$hFile = _WinAPI_CreateFile("\\.\" & $File,2,2,7)
-If $hFile = 0 Then
-	ConsoleWrite("Error: Creating handle on file" & @CRLF)
-	Exit
-EndIf
-$InputFileSize = _WinAPI_GetFileSizeEx($hFile)
-$MaxRecords = Ceiling($InputFileSize/$Record_Size)
-$MaxUSN = 0
-$CurrentPage = 0
-;For $CurrentPage = 0 To $MaxRecords-1
-ConsoleWrite("Max Records: " & $MaxRecords & @CRLF)
-ConsoleWrite("Input File Size: " & $InputFileSize & @CRLF)
-While $CurrentPage < $MaxRecords-1
-  ; TODO: Time limiting code here
-
-  ; Each page is 4096 bytes long and, as far as I can tell, contains a maximum
-  ; of 57 records.  These records aren't sequential but are increasing by 72
-  ; each time.  57*72 almost equals the page size of 4096 so there's probably a
-  ; connection I'm not quite getting.  Anyway, based on the highest USN we have
-  ; found so far can we (with a 10% safety net), skip ahead some pages?  Note
-  ; that even if we skip ahead we still process one page this loop so we don't
-  ; do multiple skips without actually checking the journal to make sure our
-  ; math is alligned with reality.
-  If (($CurrentPage > 0) And ($MaxUSN > 0)) Then
-    If (($MaxUSN + (110 * 57 * 72)) < $MinUSN) Then
-      If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 100) & " (100 pages)." & @CRLF)
-      $CurrentPage = $CurrentPage + 100
-    ElseIf (($MaxUSN + (55 * 57 * 72)) < $MinUSN) Then
-      If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 50) & " (50 pages)." & @CRLF)
-      $CurrentPage = $CurrentPage + 50
-    ElseIf (($MaxUSN + (11 * 57 * 72)) < $MinUSN) Then
-      If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 10) & " (10 pages)." & @CRLF)
-      $CurrentPage = $CurrentPage + 10
-    ElseIf (($MaxUSN + (5.5 * 57 * 72)) < $MinUSN) Then
-      If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 10) & " (5 pages)." & @CRLF)
-      $CurrentPage = $CurrentPage + 5
-    EndIf
-  EndIf
-
-	_WinAPI_SetFilePointerEx($hFile, $CurrentPage*$Record_Size, $FILE_BEGIN)
-	If $CurrentPage = $MaxRecords-1 Then $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
-	_WinAPI_ReadFile($hFile, DllStructGetPtr($tBuffer), $Record_Size, $nBytes)
-	$RawPage = DllStructGetData($tBuffer, 1)
-	_UsnProcessPage(StringMid($RawPage,3))
-  Sleep($CPUThrottle)
-  $CurrentPage = $CurrentPage + 1
-Wend
-;Next
-
-ConsoleWrite("Decoding finished" & @CRLF)
-ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
-ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
-ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
-
-; If $MinUSN < $FirstUSN then there are gaps in the journal between the
-; last time we ran and now (somehow missed by the check earlier).  DO A FULL
-; BACKUP!
-If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
-  ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
-  ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
-  ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
-  Exit
-EndIf
-
-; Resolve MtfReference numbers to real file paths.  This is still our biggest
-; performance bottleneck and needs more attention
-$MFTReferences = _ArrayUnique($MFTReferences, 0, 0, 0, $ARRAYUNIQUE_NOCOUNT, $ARRAYUNIQUE_MATCH)
-If $VerboseOn > 0 Then ConsoleWrite("Accepted USNs: " & _ArrayToString($MFTReferences, ", ") & @CRLF)
-For $RefIndex = 1 To UBound($MFTReferences)-1
-  $FullFileName = MftRef2Name($MFTReferences[$RefIndex])
-  If ($IgnoreSysVolInfo) And (StringInStr($FullFileName, "System Volume Information") > 0) And (StringInStr($FullFileName, "System Volume Information") < 5) Then
-    ContinueLoop
-  EndIf
-  If ($IgnoreRecycleBin) And (StringInStr($FullFileName, "$RECYCLE.BIN") > 0) And (StringInStr($FullFileName, "$RECYCLE.BIN") < 5) Then
-    ContinueLoop
-  EndIf
-  If ($IncludeParents) Then
-    $Parents = StringSplit($FullFileName, $PathSeparator)
-    $ParentTrail = $RelativePathPrefix
-    For $ParentIndex = 1 To UBound($Parents)-2
-      If (StringLen($Parents[$ParentIndex]) < 1) Then
-        ContinueLoop
-      EndIf
-      If (StringLen($ParentTrail) > 1) Then
-        $ParentTrail = $ParentTrail & $PathSeparator & $Parents[$ParentIndex]
-      Else
-        $ParentTrail = $ParentTrail & $Parents[$ParentIndex]
-      EndIf
-      If (_ArraySearch($OutputEntries, $ParentTrail, 0, 0, 0, 2) < 1) Then
-        If (StringLen($OutputToFile) > 0) Then
-          FileWriteLine($OutputFile, $ParentTrail)
+  Else
+    If $VerboseOn > 0 Then ConsoleWrite("USN Journal is enabled for " & $TargetDrive & "." & @CRLF)
+    ;We can check from the fsutil output if $MinUSN is still in the journal and if
+    ; the most recent USN is way too far ahead to make the rest of the USN
+    ; processing worth while.
+    For $Line In StringSplit($FSUTILResult, @CRLF)
+      If (StringInStr($Line, "First Usn") > 0) Then
+        $FirstUSN = (StringSplit($Line, ":"))[2]
+        If ((StringLen($FirstUSN) > 0) And (StringInStr($FirstUSN, "0x") > 0)) Then
+          $FirstUSN = StringReplace($FirstUSN, " ", "")
+          $FirstUSN = StringReplace($FirstUSN, "0x", "")
+          $FirstUSN = Dec($FirstUSN)
         Else
-          ConsoleWrite($ParentTrail & @CRLF)
+          $FirstUSN = 20
         EndIf
-        _ArrayAdd($OutputEntries, $ParentTrail)
+      ElseIf (StringInStr($Line, "Next Usn") > 0) Then
+        $MaxUSN = (StringSplit($Line, ":"))[2]
+        If ((StringLen($MaxUSN) > 0) And (StringInStr($MaxUSN, "0x") > 0)) Then
+          $MaxUSN = StringReplace($MaxUSN, " ", "")
+          $MaxUSN = StringReplace($MaxUSN, "0x", "")
+          $MaxUSN = Dec($MaxUSN)
+        Else
+          $MaxUSN = 20
+        EndIf
       EndIf
     Next
   EndIf
 
-  If (_ArraySearch($OutputEntries, $FullFileName, 0, 0, 0, 2) < 1) Then
-    If (StringLen($OutputToFile) > 0) Then
-      FileWriteLine($OutputFile, $FullFileName)
-    Else
-      ConsoleWrite($FullFileName & @CRLF)
-    EndIf
-    _ArrayAdd($OutputEntries, $FullFileName)
+  ConsoleWrite("RelativePathPrefix: " & $RelativePathPrefix & @CRLF)
+
+  ; If the MinUSN (-m) no longer exists in the journal, exit.
+  If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
+    ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
+    ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
+    ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+    ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
+    ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
+    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    Return False
   EndIf
-  Sleep($CPUThrottle)
-Next
 
-If $VerboseOn > 1 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, @CRLF) & @CRLF)
-If $VerboseOn > 1 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, @CRLF) & @CRLF)
-If $VerboseOn > 1 Then ConsoleWrite("MftRefFullNames: " & _ArrayToString($MftRefFullNames, @CRLF) & @CRLF)
+  ; If there are more than MaxUSNEntriesToProcess (-M) entries in the journal, exit.
+  If ((($MaxUSN - $MinUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN > 0)) Then
+    ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
+    ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
+    ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+    ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF & @CRLF)
+    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    Return False
+  ElseIf ((($MaxUSN - $FirstUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN = 0)) Then
+    ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
+    ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
+    ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+    ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF & @CRLF)
+    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    Return False
+  EndIf
 
-; Close the output file
-If (StringLen($OutputToFile) > 0) Then
-  FileFlush($OutputFile)
-  FileClose($OutputFile)
-EndIf
+  ; We need ExtractUsnJrnl.exe.  Make sure it exists.
+  If FileExists(@ScriptDir & "\ExtractUsnJrnl\ExtractUsnJrnl.exe") Then
+    $ExtractUsnJrnlPath = @ScriptDir & "\ExtractUsnJrnl\"
+  ElseIf FileExists(@ScriptDir & "\ExtractUsnJrnl.exe") Then
+    $ExtractUsnJrnlPath = @ScriptDir & "\"
+  Else
+    ConsoleWriteError("ExtractUsnJrnl.exe not found!" & @CRLF)
+    Return False
+  EndIf
 
-_WinAPI_CloseHandle($hFile)
+  ; Need to set $File to USN Journal file path
+  $File = $ExtractUsnJrnlPath & "\$UsnJrnl_$J.bin"
+
+  ; Delete $File if it exists
+  If FileExists($File) Then
+    If $VerboseOn > 0 Then ConsoleWrite("Deleting previously extracted USN Journal." & @CRLF)
+    FileDelete($File)
+  EndIf
+
+  ; If we're going to output to file, open the file for writing now
+  If (StringLen($OutputToFile) > 0) Then
+    $OutputFile = FileOpen($OutputToFile, $OutputFileEncoding + $AppendToOutputFile)
+    If @error Then
+      ConsoleWriteError("Error creating: " & $OutputToFile & @CRLF)
+      Return False
+    EndIf
+  EndIf
+
+  ; Here we call the ExtractUsnJrnl.exe to extract a copy of the USN Journal from
+  ; the target drive
+  ConsoleWrite("Extracting USN Journal with ExtractUsnJrnl.exe" & @CRLF)
+  ;TODO: Maybe we allow for specifying the working directory used on the next line
+  ; so the caller has more control over where the temporary file is stored.
+  Local $ExtractUsnJrnlPid = Run($ExtractUsnJrnlPath & "ExtractUsnJrnl.exe " & $TargetDrive, $ExtractUsnJrnlPath, @SW_HIDE, $STDOUT_CHILD)
+  ProcessWaitClose($ExtractUsnJrnlPid)
+  Local $ExtractUsnJrnlResult = StdoutRead($ExtractUsnJrnlPid)
+  If $VerboseOn > 0 Then ConsoleWrite($ExtractUsnJrnlResult)
+  Sleep($CPUThrottle * 10)
+
+  ;For Testing: To actually use a USN Journal file other than the one just
+  ; extracted, override the value of $File here.
+  ;$File = $ExtractUsnJrnlPath & "\$UsnJrnl_$J.bin-rds1-wak-C"
+
+  If Not FileExists($File) Then
+  	ConsoleWrite("Error: Could not find extracted USN Journal file.  Maybe ExtractUsnJrnl.exe failed." & @CRLF)
+  	Return False
+  EndIf
+  $TimestampStart = @YEAR & "-" & @MON & "-" & @MDAY & "_" & @HOUR & "-" & @MIN & "-" & @SEC
+
+  ConsoleWrite("Decoding $UsnJrnl info..." & @CRLF)
+  $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
+  $hFile = _WinAPI_CreateFile("\\.\" & $File,2,2,7)
+  If $hFile = 0 Then
+  	ConsoleWrite("Error: Creating handle on file" & @CRLF)
+  	Return False
+  EndIf
+  $InputFileSize = _WinAPI_GetFileSizeEx($hFile)
+  $MaxRecords = Ceiling($InputFileSize/$Record_Size)
+  $MaxUSN = 0
+  $LastPageMaxUSN = 0
+  $CurrentPage = 0
+  ;For $CurrentPage = 0 To $MaxRecords-1
+  ConsoleWrite("Max Records: " & $MaxRecords & @CRLF)
+  ConsoleWrite("Input File Size: " & $InputFileSize & @CRLF)
+  While $CurrentPage < $MaxRecords
+    ; TODO: Time limiting code here
+
+    ; Each page is 4096 bytes long and, as far as I can tell, contains a maximum
+    ; of 57 records.  These records aren't sequential but are increasing by 72
+    ; each time.  57*72 almost equals the page size of 4096 so there's probably a
+    ; connection I'm not quite getting.  Anyway, based on the highest USN we have
+    ; found so far, can we (with a 10% safety net), skip ahead some pages?  Note
+    ; that even if we skip ahead we still process one page this loop so we don't
+    ; do multiple skips without actually checking the journal to make sure our
+    ; math is alligned with reality.
+    If (($CurrentPage > 0) And ($MaxUSN > 0)) Then
+      If (($MaxUSN + (110 * 57 * 72)) < $MinUSN) Then
+        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 100) & " (100 pages)." & @CRLF)
+        $CurrentPage = $CurrentPage + 100
+        Sleep($CPUThrottle)
+      ElseIf (($MaxUSN + (55 * 57 * 72)) < $MinUSN) Then
+        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 50) & " (50 pages)." & @CRLF)
+        $CurrentPage = $CurrentPage + 50
+        Sleep($CPUThrottle)
+      ElseIf (($MaxUSN + (11 * 57 * 72)) < $MinUSN) Then
+        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 10) & " (10 pages)." & @CRLF)
+        $CurrentPage = $CurrentPage + 10
+        Sleep($CPUThrottle)
+      ElseIf (($MaxUSN + (5.5 * 57 * 72)) < $MinUSN) Then
+        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 5) & " (5 pages)." & @CRLF)
+        $CurrentPage = $CurrentPage + 5
+        Sleep($CPUThrottle)
+      EndIf
+    EndIf
+
+    $LastPageMaxUSN = 0
+  	_WinAPI_SetFilePointerEx($hFile, $CurrentPage*$Record_Size, $FILE_BEGIN)
+  	If $CurrentPage = $MaxRecords-1 Then $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
+  	_WinAPI_ReadFile($hFile, DllStructGetPtr($tBuffer), $Record_Size, $nBytes)
+  	$RawPage = DllStructGetData($tBuffer, 1)
+  	_UsnProcessPage(StringMid($RawPage,3))
+    Sleep($CPUThrottle)
+    $CurrentPage = $CurrentPage + 1
+  Wend
+  ;Next
+
+  ConsoleWrite("Decoding finished" & @CRLF)
+  ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
+  ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
+  ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+
+  ; If $MinUSN > $MaxUSN then the provided $MinUSN cannot have been correct
+  If ($MinUSN > $MaxUSN) Then
+    ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was higher than the highest USN found in the journal.  The highest USN actually found in the journal will now be used as the baseline." & @CRLF & @CRLF)
+    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    _WinAPI_CloseHandle($hFile)
+    Return False
+  EndIf
+
+  ; If $MinUSN < $FirstUSN then there are gaps in the journal between the
+  ; last time we ran and now (somehow missed by the check earlier).  DO A FULL
+  ; BACKUP!
+  If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
+    ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
+    ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
+    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    _WinAPI_CloseHandle($hFile)
+    Return False
+  EndIf
+
+  ; Resolve MtfReference numbers to real file paths.  This is still our biggest
+  ; performance bottleneck and needs more attention
+  $MFTReferences = _ArrayUnique($MFTReferences, 0, 0, 0, $ARRAYUNIQUE_NOCOUNT, $ARRAYUNIQUE_MATCH)
+  If $VerboseOn > 0 Then ConsoleWrite("Accepted USNs: " & _ArrayToString($MFTReferences, ", ") & @CRLF)
+  For $RefIndex = 1 To UBound($MFTReferences)-1
+    $FullFileName = MftRef2Name($MFTReferences[$RefIndex])
+    If ($IgnoreSysVolInfo) And (StringInStr($FullFileName, "System Volume Information") > 0) And (StringInStr($FullFileName, "System Volume Information") < 5) Then
+      Sleep($CPUThrottle)
+      ContinueLoop
+    EndIf
+    If ($IgnoreRecycleBin) And (StringInStr($FullFileName, "$RECYCLE.BIN") > 0) And (StringInStr($FullFileName, "$RECYCLE.BIN") < 5) Then
+      Sleep($CPUThrottle)
+      ContinueLoop
+    EndIf
+    If ($IncludeParents) Then
+      $Parents = StringSplit($FullFileName, $PathSeparator)
+      $ParentTrail = $RelativePathPrefix
+      For $ParentIndex = 1 To UBound($Parents)-2
+        If (StringLen($Parents[$ParentIndex]) < 1) Then
+          Sleep($CPUThrottle)
+          ContinueLoop
+        EndIf
+        If (StringLen($ParentTrail) > 1) Then
+          $ParentTrail = $ParentTrail & $PathSeparator & $Parents[$ParentIndex]
+        Else
+          $ParentTrail = $ParentTrail & $Parents[$ParentIndex]
+        EndIf
+        If (_ArraySearch($OutputEntries, $ParentTrail, 0, 0, 0, 2) < 1) Then
+          If (StringLen($OutputToFile) > 0) Then
+            FileWriteLine($OutputFile, $ParentTrail)
+          Else
+            ConsoleWrite($ParentTrail & @CRLF)
+          EndIf
+          _ArrayAdd($OutputEntries, $ParentTrail)
+        EndIf
+      Next
+    EndIf
+
+    If (_ArraySearch($OutputEntries, $FullFileName, 0, 0, 0, 2) < 1) Then
+      If (StringLen($OutputToFile) > 0) Then
+        FileWriteLine($OutputFile, $FullFileName)
+      Else
+        ConsoleWrite($FullFileName & @CRLF)
+      EndIf
+      _ArrayAdd($OutputEntries, $FullFileName)
+    EndIf
+    Sleep($CPUThrottle)
+  Next
+
+  If $VerboseOn > 1 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, @CRLF) & @CRLF)
+  If $VerboseOn > 1 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, @CRLF) & @CRLF)
+  If $VerboseOn > 1 Then ConsoleWrite("MftRefFullNames: " & _ArrayToString($MftRefFullNames, @CRLF) & @CRLF)
+
+  ; Close the output file
+  If (StringLen($OutputToFile) > 0) Then
+    FileFlush($OutputFile)
+    FileClose($OutputFile)
+  EndIf
+
+  _WinAPI_CloseHandle($hFile)
+
+  ;TODO: Probably should delete the extracted $UsnJrnl_$J.bin file before we quit
+  Return True
+
+EndFunc
 
 Func _UsnDecodeRecord($Record)
-
 	$UsnJrnlRecordLength = StringMid($Record,1,8)
 	$UsnJrnlRecordLength = Dec(_SwapEndian($UsnJrnlRecordLength),2)
 ;	$UsnJrnlMajorVersion = StringMid($Record,9,4)
@@ -443,7 +629,7 @@ Func _UsnDecodeRecord($Record)
 	$UsnJrnlFileNameOffset = Dec(_SwapEndian($UsnJrnlFileNameOffset),2)
 	$UsnJrnlFileName = StringMid($Record,121,$UsnJrnlFileNameLength*2)
 	$UsnJrnlFileName = _UnicodeHexToStr($UsnJrnlFileName)
-	If $VerboseOn > 1 Then
+	If $VerboseOn > 2 Then
 		ConsoleWrite("$UsnJrnlFileReferenceNumber: " & $UsnJrnlFileReferenceNumber & @CRLF)
 		ConsoleWrite("$UsnJrnlMFTReferenceSeqNo: " & $UsnJrnlMFTReferenceSeqNo & @CRLF)
 		ConsoleWrite("$UsnJrnlParentFileReferenceNumber: " & $UsnJrnlParentFileReferenceNumber & @CRLF)
@@ -467,6 +653,12 @@ Func _UsnDecodeRecord($Record)
   If $VerboseOn > 1 Then ConsoleWrite("This USN: " & $UsnJrnlUsn & @CRLF)
   If ($UsnJrnlUsn > $MaxUSN) Then
     $MaxUSN = $UsnJrnlUsn
+  EndIf
+
+  ; The page skipping logic needs to know the highest USN that we find in this
+  ; page
+  If ($UsnJrnlUsn > $LastPageMaxUSN) Then
+    $LastPageMaxUSN = $UsnJrnlUsn
   EndIf
 
   ; If this USN is lower then the MinUSN then this change has already been
@@ -607,8 +799,8 @@ Func HelpMessage()
   ConsoleWrite("     -a file Append changed file list to file." & @CRLF)
   ConsoleWrite("     -h      Show this help message and quit" & @CRLF)
   ConsoleWrite("     -l      Use longer sleep cycles to reduce CPU usage and the expense of the" & @CRLF)
-  ConsoleWrite("             process taking longer.  You can use this switch twice to further" & @CRLF)
-  ConsoleWrite("             increase the length of the sleep cycles." & @CRLF)
+  ConsoleWrite("             process taking longer.  You can use this switch twice or three " & @CRLF)
+  ConsoleWrite("             times to further increase the length of the sleep cycles." & @CRLF)
   ConsoleWrite("     -m num  Specify the USN of the first acceptable journal entry.  This will" & @CRLF)
   ConsoleWrite("             likely be the 'Maximum Found USN' from the previous run." & @CRLF)
   ConsoleWrite("             Basically, all journal entries before the specified num will be" & @CRLF)
@@ -619,20 +811,27 @@ Func HelpMessage()
   ConsoleWrite("             entry (see '-m' above) and the last entry in the journal. If there" & @CRLF)
   ConsoleWrite("             are more than num entries, abort and suggest running a full backup" & @CRLF)
   ConsoleWrite("             Not yet implemented." & @CRLF)
-  ConsoleWrite("     -o file Output changed file list to file.  If file already exists it will be" & @CRLF)
-  ConsoleWrite("             overwritten" & @CRLF)
-  ConsoleWrite("     -p      Include the parent directories of each object in the output list." & @CRLF)
+  ConsoleWrite("     -o file Output changed file list to file.  If file already exists it will " & @CRLF)
+  ConsoleWrite("             be overwritten" & @CRLF)
+  ConsoleWrite("     +p      Include the parent directories of each object in the output list." & @CRLF)
+  ConsoleWrite("     -p      Do not include the parent directories of each object in the output " & @CRLF)
+  ConsoleWrite("             list." & @CRLF)
   ConsoleWrite("     -r      Output file paths relative to the volume root." & @CRLF)
   ConsoleWrite("     -R path Output file paths relative to the volume root and prefixed with" & @CRLF)
   ConsoleWrite("             path.  This might be useful if you want to create a full path in" & @CRLF)
   ConsoleWrite("             UNC format or reference a VSS snapshot via" & @CRLF)
   ConsoleWrite("             \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyXXX" & @CRLF)
+  ConsoleWrite("     -service Start " & $MyName & " in the experimental 'run as a" & @CRLF)
+  ConsoleWrite("             servce' mode" & @CRLF)
   ConsoleWrite("     -S      Exclude files in the 'System Volume Information' directory." & @CRLF)
+  ConsoleWrite("     +S      Include files in the 'System Volume Information' directory." & @CRLF)
   ConsoleWrite("     -T      Exclude files in the '$RECYCLE.BIN' directory." & @CRLF)
+  ConsoleWrite("     +T      Include files in the '$RECYCLE.BIN' directory." & @CRLF)
   ConsoleWrite("     -t sec  Time limit.  Don't spend more the sec seconds extracting values" & @CRLF)
   ConsoleWrite("             before aborting and suggesting a full backup instead.  Not yet" & @CRLF)
   ConsoleWrite("             implemented." & @CRLF)
-  ConsoleWrite("     -u      Use Unix (/) instead of Windows (\) path separator." & @CRLF)
+  ConsoleWrite("     +u      Use Unix (/) instead of Windows (\) path separator." & @CRLF)
+  ConsoleWrite("     -u      Use Windows (\) instead of Unix (/) path separator." & @CRLF)
   ConsoleWrite("     -v      Enable verbose output.  Use twice for more verbose output." & @CRLF)
   ConsoleWrite("     -V      Output version and quit" & @CRLF)
   ConsoleWrite("     Volume  The volume to extract the USN Journal from" & @CRLF & @CRLF)

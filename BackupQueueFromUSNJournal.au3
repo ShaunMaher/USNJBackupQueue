@@ -67,6 +67,8 @@ Global $MaxUSN = 0
 Global $MinUSN = 0
 Global $FirstUSN = 0
 Global $OutputToFile = ""
+Global $StatusToFile = ""
+Global $LogToFile = ""
 Global $TimeLimit = 31557600 ; Not actually implemented
 Global $AppendToOutputFile = 2  ; 1 = Append, 2 = Overwrite
 Global $OutputFileEncoding = 0  ;32 = Unicode, 0 = UTF8
@@ -128,6 +130,8 @@ If ($cmdline[0] > 0) Then
       Else
         $CPUThrottle = 500
       EndIf
+    ElseIf $cmdline[$i] == "-L" Then
+      $LogToFile = $cmdline[$i + 1]
     ElseIf $cmdline[$i] == "-m" Then
       If StringIsDigit($cmdline[$i + 1]) Then
         $MinUSN = $cmdline[$i + 1]
@@ -229,6 +233,11 @@ If ($ServiceMode) Then
     ; Check the last run time against the current time
     $Now = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
 
+    ; Reload settings from the regisrty.  This way we don't need to restart the
+    ;  service each time a setting is changed
+    ;TODO: this will override command line options which we didn't want to do.
+    _LoadConfigFromRegistry($TargetDrive)
+
     If $VerboseOn > 1 Then ConsoleWrite("LastCycle: " & $LastCycle & ", Now: " & $Now & @CRLF)
     If (($LastCycle + ($ServiceCycleFrequency / 1000)) < $Now) Then
       If $VerboseOn > 0 Then ConsoleWrite("Running _MainProcess" & @CRLF)
@@ -239,14 +248,15 @@ If ($ServiceMode) Then
 
       If Not ($MainProcessResult) Then
         ConsoleWriteError("TODO: Something in the _MainProcess failed.  We need to let the backup program know to run a full backup." & @CRLF)
+        ;TODO: Send something to $StatusToFile that indicates that a full backup should happen
       EndIf
 
       ; Cleanup variables so we're ready for the next cycle
       ReDim $MFTReferences[2]
       $MinUSN = $MaxUSN
 
-      ;TODO: Whereever we get the $MinUSN from, save it there now
-      ;https://www.autoitscript.com/autoit3/docs/functions/RegWrite.htm
+      ; Save the most recently extracted USN as the new MinUSN in the registry
+      ; https://www.autoitscript.com/autoit3/docs/functions/RegWrite.htm
       RegWrite("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "MinUSN", "REG_QWORD", $MinUSN)
 
       $LastCycle = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
@@ -277,6 +287,13 @@ EndIf
 
 Func _LoadConfigFromRegistry($TargetDrive)
   Local $PotentialValue = False
+  Local $RegistryKey = "HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive
+
+  ;TODO: Use new functions
+  ;_LoadNumberFromRegistry($RegistryKey, "VerboseOn", Null, $VerboseOn)
+  ;_LoadStringFromRegistry($RegistryKey, "PathSeparator", Null, $PathSeparator)
+  ;_LoadBoolFromRegistry($RegistryKey, "IgnoreRecycleBin", Null, $IgnoreRecycleBin)
+  _LoadBoolFromRegistry($RegistryKey, "RelativePaths", $RelativePaths, $RelativePaths)
 
   ;TODO: This is some ugly code!
   $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "VerboseOn")
@@ -307,11 +324,11 @@ Func _LoadConfigFromRegistry($TargetDrive)
     If ($PotentialValue > 0) Then $IgnoreSysVolInfo = True
   EndIf
 
-  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "RelativePaths")
-  If IsNumber($PotentialValue) And Not @error Then
-    $RelativePaths = False
-    If ($PotentialValue > 0) Then $RelativePaths = True
-  EndIf
+  ;$PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "RelativePaths")
+  ;If IsNumber($PotentialValue) And Not @error Then
+  ;  $RelativePaths = False
+  ;  If ($PotentialValue > 0) Then $RelativePaths = True
+  ;EndIf
 
   $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "RelativePathPrefix")
   If IsString($PotentialValue) And Not @error Then $RelativePathPrefix = $PotentialValue
@@ -319,7 +336,7 @@ Func _LoadConfigFromRegistry($TargetDrive)
 
   $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "IncludeParents")
   If IsNumber($PotentialValue) And Not @error Then
-    $RelativePaths = False
+    $IncludeParents = False
     If ($PotentialValue > 0) Then $IncludeParents = True
   EndIf
 
@@ -327,6 +344,83 @@ Func _LoadConfigFromRegistry($TargetDrive)
   If IsNumber($PotentialValue) And Not @error Then
     $AppendToOutputFile = False
     If ($PotentialValue > 0) Then $AppendToOutputFile = True
+  EndIf
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "ServiceCycleFrequency")
+  If IsNumber($PotentialValue) And Not @error Then $ServiceCycleFrequency = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "ServiceStartupDelay")
+  If IsNumber($PotentialValue) And Not @error Then $ServiceStartupDelay = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "CachePurgeFrequency")
+  If IsNumber($PotentialValue) And Not @error Then $CachePurgeFrequency = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "MaxUSNEntriesToProcess")
+  If IsNumber($PotentialValue) And Not @error Then $MaxUSNEntriesToProcess = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "StatusToFile")
+  If IsString($PotentialValue) And Not @error Then $StatusToFile = $PotentialValue
+  SetError(0)
+
+  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "LogToFile")
+  If IsString($PotentialValue) And Not @error Then $LogToFile = $PotentialValue
+  SetError(0)
+EndFunc
+
+Func _LoadStringFromRegistry($Key, $Value, $DefaultValue, ByRef $Variable)
+  Local $PotentialValue = RegRead($Key, $Value)
+  If IsString($PotentialValue) And Not @error Then
+    $Variable = $PotentialValue
+    Return True
+  Else
+    ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
+    $Variable = $DefaultValue
+    Return False
+  EndIf
+EndFunc
+
+Func _LoadNumberFromRegistry($Key, $Value, $DefaultValue, ByRef $Variable)
+  Local $PotentialValue = RegRead($Key, $Value)
+  If IsNumber($PotentialValue) And Not @error Then
+    $Variable = $PotentialValue
+    Return True
+  ElseIf @error Then
+    ConsoleWriteError("Error reading registry value '" & $Value & "'.  " & @error & @CRLF)
+    ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
+    $Variable = $DefaultValue
+    Return False
+  ElseIf Not IsNumber($PotentialValue) Then
+    ConsoleWriteError("Invalid value for registry value '" & $Key & "' '" & $Value & "'.  Number expected."  & @CRLF)
+    ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
+    $Variable = $DefaultValue
+    Return False
+  EndIf
+EndFunc
+
+Func _LoadBoolFromRegistry($Key, $Value, $DefaultValue, ByRef $Variable)
+  Local $PotentialValue = RegRead($Key, $Value)
+  Local $ReadError = @error
+  If IsNumber($PotentialValue) And Not $ReadError Then
+    If ($PotentialValue > 0) Then
+      $Variable = True
+    Else
+      $Variable = False
+    EndIf
+    Return True
+  ElseIf $ReadError Then
+    ConsoleWriteError("Error reading registry value '" & $Value & "'.  " & $ReadError & @CRLF)
+    ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
+    $Variable = $DefaultValue
+    Return False
+  ElseIf Not IsNumber($PotentialValue) Then
+    ConsoleWriteError("Invalid value for registry value '" & $Key & "' '" & $Value & "'.  Number expected but found '" & $PotentialValue & "'."  & @CRLF)
+    ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
+    $Variable = $DefaultValue
+    Return False
   EndIf
 EndFunc
 
@@ -475,7 +569,19 @@ Func _MainProcess()
     ; do multiple skips without actually checking the journal to make sure our
     ; math is alligned with reality.
     If (($CurrentPage > 0) And ($MaxUSN > 0)) Then
-      If (($MaxUSN + (110 * 57 * 72)) < $MinUSN) Then
+      If (($MaxUSN + (5500 * 57 * 72)) < $MinUSN) Then
+        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 5000) & " (5000 pages)." & @CRLF)
+        $CurrentPage = $CurrentPage + 5000
+        Sleep($CPUThrottle)
+      ElseIf (($MaxUSN + (1100 * 57 * 72)) < $MinUSN) Then
+        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 1000) & " (1000 pages)." & @CRLF)
+        $CurrentPage = $CurrentPage + 1000
+        Sleep($CPUThrottle)
+      ElseIf (($MaxUSN + (550 * 57 * 72)) < $MinUSN) Then
+        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 500) & " (500 pages)." & @CRLF)
+        $CurrentPage = $CurrentPage + 500
+        Sleep($CPUThrottle)
+      ElseIf (($MaxUSN + (110 * 57 * 72)) < $MinUSN) Then
         If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 100) & " (100 pages)." & @CRLF)
         $CurrentPage = $CurrentPage + 100
         Sleep($CPUThrottle)
@@ -650,7 +756,7 @@ Func _UsnDecodeRecord($Record)
   EndIf
 
   ; We will need the maximum USN value so we know where to kick off the next run
-  If $VerboseOn > 1 Then ConsoleWrite("This USN: " & $UsnJrnlUsn & @CRLF)
+  If $VerboseOn > 2 Then ConsoleWrite("This USN: " & $UsnJrnlUsn & @CRLF)
   If ($UsnJrnlUsn > $MaxUSN) Then
     $MaxUSN = $UsnJrnlUsn
   EndIf
@@ -785,12 +891,28 @@ Func MftRef2Name($IndexNumber)
 
     If ($RelativePaths) Then
       $FullFileName = $RelativePathPrefix & $ResolvedPath & $PathSeparator & $FileName
+      If $VerboseOn > 1 Then ConsoleWrite("'" & $FullFileName & "' should be a RELATIVE path." & @CRLF)
     Else
       $FullFileName = $TargetDrive & $PathSeparator & $ResolvedPath & $PathSeparator & $FileName
+      If $VerboseOn > 1 Then ConsoleWrite("'" & $FullFileName & "' should be an ABSOLUTE path." & @CRLF)
     EndIf
 
   	Return StringReplace($FullFileName, $PathSeparator & $PathSeparator, $PathSeparator)
   EndIf
+EndFunc
+
+;TODO: The following functions need to be populated and calls to the original
+; functions replaced
+Func _ConsoleWrite($Text)
+
+EndFunc
+
+Func _ConsoleWriteError($Text)
+
+EndFunc
+
+Func _ConsoleWriteVerbose($Level, $Type, $Text)
+
 EndFunc
 
 Func HelpMessage()
@@ -801,6 +923,8 @@ Func HelpMessage()
   ConsoleWrite("     -l      Use longer sleep cycles to reduce CPU usage and the expense of the" & @CRLF)
   ConsoleWrite("             process taking longer.  You can use this switch twice or three " & @CRLF)
   ConsoleWrite("             times to further increase the length of the sleep cycles." & @CRLF)
+  ConsoleWrite("     -L file Send all console output to a log file as well as the console.  Not" & @CRLF)
+  ConsoleWrite("             yet implemented.")
   ConsoleWrite("     -m num  Specify the USN of the first acceptable journal entry.  This will" & @CRLF)
   ConsoleWrite("             likely be the 'Maximum Found USN' from the previous run." & @CRLF)
   ConsoleWrite("             Basically, all journal entries before the specified num will be" & @CRLF)

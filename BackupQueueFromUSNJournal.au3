@@ -28,7 +28,7 @@
 ; from within the AutoIt3 provided SciTE-Lite editor.
 
 ; To create a stand alone executable:
-;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.4 /productversion 1.0.0.3 /productname BackupQueueFromUSNJournal
+;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.4 /productversion 1.0.0.4 /productname BackupQueueFromUSNJournal
 ;
 ; Finally, my excuse for code in this script being ugly and inefficient is that
 ; this is the first time I have ever worked with AutoIt code and there are large
@@ -219,6 +219,8 @@ If ($ServiceMode) Then
   If IsNumber($PotentialMinUSN) Then
     If $VerboseOn > 0 Then ConsoleWrite("Minimum Acceped USN loaded from local registry: " & $PotentialMinUSN & @CRLF)
     $MinUSN = $PotentialMinUSN
+  Else
+    ConsoleWriteError ("No MinUSN found in the registry.  " & $PotentialMinUSN)
   EndIf
 
   ; Sleep for $ServiceStartupDelay
@@ -863,13 +865,14 @@ Func MftRef2Name($IndexNumber)
       ; navigate our way up the tree to the root.  Each time we fetch a name and
       ; $Mft reference we cache it to MftRefNames and MftRefParents so we never
       ; need to ask the file system the same question twice
+      Local $LoopCounter = 0;
     	Do
         $ParentIndex = _ArraySearch($MftRefParents, $TestParentRef & ":", 0, 0, 0, 1)
         $NameIndex = _ArraySearch($MftRefNames, $TestParentRef & ":", 0, 0, 0, 1)
         If (($ParentIndex > -1) And ($NameIndex > -1)) Then
           $TestFileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[1]
           $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[1]
-          ;ConsoleWrite("I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?" & @CRLF)
+          If $VerboseOn > 1 Then ConsoleWrite("I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?" & @CRLF)
         Else
       		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
       		$NewRecord = _FindFileMFTRecord($TestParentRef)
@@ -877,13 +880,20 @@ Func MftRef2Name($IndexNumber)
       		$TmpRef = _GetParent()
       		If @error then ExitLoop
           If $VerboseOn > 1 Then ConsoleWrite($TestParentRef & " -> " & $TmpRef[0] & @CRLF)
-          _ArrayAdd($MftRefParents, $TestParentRef & ":" & $TmpRef[0])
-          _ArrayAdd($MftRefNames, $TestParentRef & ":" & $TmpRef[1])
-      		$TestFileName = $TmpRef[1]
-      		$TestParentRef = $TmpRef[0]
-        EndIf
+            _ArrayAdd($MftRefParents, $TestParentRef & ":" & $TmpRef[0])
+            _ArrayAdd($MftRefNames, $TestParentRef & ":" & $TmpRef[1])
+        		$TestFileName = $TmpRef[1]
+        		$TestParentRef = $TmpRef[0]
+          EndIf
     		$ResolvedPath = $TestFileName & $PathSeparator & $ResolvedPath
-    	Until $TestParentRef=5
+        $LoopCounter = $LoopCOunter + 1
+    	Until (($TestParentRef = 5) Or ($LoopCounter > 500))
+
+      ; This should never happen but just in case it does we will output an
+      ;  error message.
+      If ((Not $TestParentRef = 5) Or ($LoopCounter > 500)) Then
+        ConsoleWriteError("MftRef2Name: Unable to resolve $Mft entry to volume root.  " & $TestParentRef & " != 5")
+      EndIf
 
       If StringLeft($ResolvedPath,2) = "." & $PathSeparator Then $ResolvedPath = StringTrimLeft($ResolvedPath,2)
       _ArrayAdd($MftRefFullNames, $BottomRef & ":" & $ResolvedPath)

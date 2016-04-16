@@ -54,6 +54,7 @@ Global $PrecisionSeparator = "."
 Global $de = "|"
 Global $Record_Size = 4096
 Global $VerboseOn = 0
+Global $VerboseToFileOn = 0
 Global $ParserOutDir = @ScriptDir
 Global $CPUThrottle = 10
 Global $File, $WithQuotes, $MaxRecords, $nBytes, $UsnJrnlCsv, $UsnJrnlCsvFile
@@ -72,6 +73,7 @@ Global $StatusToFile = ""
 Global $LogToFile = ""
 Global $TimeLimit = 31557600 ; Not actually implemented
 Global $AppendToOutputFile = 2  ; 1 = Append, 2 = Overwrite
+Global $AppendToLogFile = 1
 Global $OutputFileEncoding = 0  ;32 = Unicode, 0 = UTF8
 Global $PathSeparator = "\"
 Global $RelativePaths = False
@@ -121,12 +123,12 @@ If ($cmdline[0] > 0) Then
     ElseIf $cmdline[$i] == "-v" Then
       $VerboseOn = $VerboseOn + 1
       If ($VerboseOn = 1) Then
-        ConsoleWrite("Turning on verbose output" & @CRLF)
+        _ConsoleWriteLine("Turning on verbose output")
       Else
-        ConsoleWrite("Increasing output verbosity" & @CRLF)
+        _ConsoleWriteLine("Increasing output verbosity")
       EndIf
     ElseIf $cmdline[$i] == "-V" Then
-      ConsoleWrite($MyName & " " & $MyVersion & @CRLF)
+      _ConsoleWriteLine($MyName & " " & $MyVersion)
       Exit
     ElseIf $cmdline[$i] = "-l" Then
       If ($CPUThrottle = 10) Then
@@ -142,14 +144,14 @@ If ($cmdline[0] > 0) Then
       If StringIsDigit($cmdline[$i + 1]) Then
         $MinUSN = $cmdline[$i + 1]
       Else
-        ConsoleWriteError("Error: The value specified for the -m switch must be a number." & @CRLF)
+        _ConsoleWriteError("Error: The value specified for the -m switch must be a number.")
         Exit
       EndIf
     ElseIf $cmdline[$i] == "-M" Then
       If StringIsDigit($cmdline[$i + 1]) Then
         $MaxUSNEntriesToProcess = $cmdline[$i + 1]
       Else
-        ConsoleWriteError("Error: The value specified for the -M switch must be a number." & @CRLF)
+        _ConsoleWriteError("Error: The value specified for the -M switch must be a number.")
         Exit
       EndIf
     ElseIf $cmdline[$i] == "+p" Then
@@ -175,7 +177,7 @@ If ($cmdline[0] > 0) Then
       $IgnoreRecycleBin = False
     ElseIf $cmdline[$i] == "-t" Then
       $TimeLimit = $cmdline[$i + 1]
-      ConsoleWriteError ("Sorry.  The Time Limit feature isn't implemented yet." & @CRLF)
+      _ConsoleWriteError("Sorry.  The Time Limit feature isn't implemented yet.")
     ElseIf $cmdline[$i] == "+u" Then
       $PathSeparator = "/"
     ElseIf $cmdline[$i] == "-u" Then
@@ -188,7 +190,7 @@ If ($cmdline[0] > 0) Then
 
   ; If we don't know which drive/volume to process we can't do anything
   If (StringLen($TargetDrive) < 1) Then
-    ConsoleWriteError("'" & $cmdline[$cmdline[0]] & "' is not a valid value for Volume." & @CRLF & @CRLF)
+    _ConsoleWriteError("'" & $cmdline[$cmdline[0]] & "' is not a valid value for Volume.")
     HelpMessage()
     Exit
   EndIf
@@ -207,21 +209,21 @@ EndIf
 
 ; Input validation - Ensure target volume exists
 If Not (FileExists($TargetDrive & "\")) Then
-  ConsoleWriteError("Error: The specified target volume '" & $TargetDrive & "' doesn't seem to exist.")
+  _ConsoleWriteError("Error: The specified target volume '" & $TargetDrive & "' doesn't seem to exist.")
   Exit
 EndIf
 
 ; Input validation - Ensure target volume is NTFS
 _ReadBootSector($TargetDrive)
 If @error Then
-	ConsoleWriteError("Error: Filesystem not NTFS" & @CRLF)
+	_ConsoleWriteError("Error: Filesystem not NTFS")
 	Exit
 EndIf
 
 ; Set Process Priority of self
-If $VerboseOn > 0 Then ConsoleWrite ("My PID: " & @AutoItPID & @CRLF)
+_ConsoleWriteVerbose(1, "", "My PID: " & @AutoItPID)
 If ($ProcessPriority > -1) Then
-  If $VerboseOn > 0 Then ConsoleWrite ("Setting my process priority to: " & $ProcessPriority & @CRLF)
+  _ConsoleWriteVerbose(1, "", "Setting my process priority to: " & $ProcessPriority)
   ProcessSetPriority (@AutoItPID, $ProcessPriority)
 EndIf
 
@@ -230,14 +232,14 @@ If ($ServiceMode) Then
   ;https://www.autoitscript.com/autoit3/docs/functions/RegRead.htm
   Local $PotentialMinUSN = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "MinUSN")
   If IsNumber($PotentialMinUSN) Then
-    If $VerboseOn > 0 Then ConsoleWrite("Minimum Acceped USN loaded from local registry: " & $PotentialMinUSN & @CRLF)
+    _ConsoleWriteVerbose(1, "", "Minimum Acceped USN loaded from local registry: " & $PotentialMinUSN)
     $MinUSN = $PotentialMinUSN
   Else
-    ConsoleWriteError ("No MinUSN found in the registry.  " & $PotentialMinUSN)
+    _ConsoleWriteError("No MinUSN found in the registry.  " & $PotentialMinUSN)
   EndIf
 
   ; Sleep for $ServiceStartupDelay
-  If $VerboseOn > 0 Then ConsoleWrite("Service startup delay: " & ($ServiceStartupDelay / 1000) & "s" & @CRLF)
+  _ConsoleWriteVerbose(1, "", "Service startup delay: " & ($ServiceStartupDelay / 1000) & "s")
   Sleep($ServiceStartupDelay)
 
   Local $LastCycle = 0
@@ -255,21 +257,21 @@ If ($ServiceMode) Then
     ;TODO: this will override command line options which we didn't want to do.
     _LoadConfigFromRegistry($TargetDrive)
 
-    If (($ProcessPriority > -1) And Not ($ProcessPriority = $CurrentProcessPriority)) Then
-      If $VerboseOn > 0 Then ConsoleWrite ("Setting my process priority to: " & $ProcessPriority & @CRLF)
+    If (($ProcessPriority > -1) And ($ProcessPriority <> $CurrentProcessPriority)) Then
+      _ConsoleWriteVerbose(1, "", "Setting my process priority to: " & $ProcessPriority)
       ProcessSetPriority (@AutoItPID, $ProcessPriority)
     EndIf
 
-    If $VerboseOn > 2 Then ConsoleWrite("LastCycle: " & $LastCycle & ", Now: " & $Now & @CRLF)
+    _ConsoleWriteVerbose(3, "", "LastCycle: " & $LastCycle & ", Now: " & $Now)
     If (($LastCycle + ($ServiceCycleFrequency / 1000)) < $Now) Then
-      If $VerboseOn > 0 Then ConsoleWrite("Running _MainProcess" & @CRLF)
+      _ConsoleWriteVerbose(1, "", "Running _MainProcess")
       $LastCycle = $Now
 
       ; Run the part that does the hard work
       Local $MainProcessResult = _MainProcess()
 
       If Not ($MainProcessResult) Then
-        ConsoleWriteError("TODO: Something in the _MainProcess failed.  We need to let the backup program know to run a full backup." & @CRLF)
+        _ConsoleWriteError("TODO: Something in the _MainProcess failed.  We need to let the backup program know to run a full backup.")
         ;TODO: Send something to $StatusToFile that indicates that a full backup should happen
       EndIf
 
@@ -288,9 +290,9 @@ If ($ServiceMode) Then
     ; usefull information in them.  Over time though they will start to contain
     ; stale entries.
     $Now = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
-    If $VerboseOn > 1 Then ConsoleWrite("LastCachePurge: " & $LastCachePurge & ", Now: " & $Now & @CRLF)
+    _ConsoleWriteVerbose(3, "", "LastCachePurge: " & $LastCachePurge & ", Now: " & $Now)
     If (($LastCachePurge + ($CachePurgeFrequency / 1000)) < $Now) Then
-      If $VerboseOn > 0 Then ConsoleWrite("Purging $MFT Cache")
+      _ConsoleWriteVerbose(1, "", "Purging $MFT Cache")
       $LastCachePurge = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
       ReDim $MftRefNames[2]
       ReDim $MftRefFullNames[2]
@@ -312,22 +314,35 @@ Func _LoadConfigFromRegistry($TargetDrive)
   Local $RegistryKey = "HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive
 
   ;TODO: Use new functions
-  ;_LoadNumberFromRegistry($RegistryKey, "VerboseOn", Null, $VerboseOn)
   ;_LoadStringFromRegistry($RegistryKey, "PathSeparator", Null, $PathSeparator)
   ;_LoadBoolFromRegistry($RegistryKey, "IgnoreRecycleBin", Null, $IgnoreRecycleBin)
   _LoadNumberFromRegistry($RegistryKey, "MaxUSNEntriesToProcess", $MaxUSNEntriesToProcess, $MaxUSNEntriesToProcess)
   _LoadNumberFromRegistry($RegistryKey, "VerboseOn", $VerboseOn, $VerboseOn)
+  _LoadNumberFromRegistry($RegistryKey, "VerboseToFileOn", $VerboseToFileOn, $VerboseToFileOn)
   _LoadNumberFromRegistry($RegistryKey, "ProcessPriority", $ProcessPriority, $ProcessPriority)
+  _LoadNumberFromRegistry($RegistryKey, "ServiceCycleFrequency", $ServiceCycleFrequency, $ServiceCycleFrequency)
+  _LoadNumberFromRegistry($RegistryKey, "ServiceStartupDelay", $ServiceStartupDelay, $ServiceStartupDelay)
+  _LoadNumberFromRegistry($RegistryKey, "CachePurgeFrequency", $CachePurgeFrequency, $CachePurgeFrequency)
+  _LoadNumberFromRegistry($RegistryKey, "CPUThrottle", $CPUThrottle, $CPUThrottle)
+
+  ; The AppendToXXXXFile variables need to be converted to 1 for append, 2 for
+  ;  overwrite
+  Local $PotentialAppendToFile = $AppendToOutputFile
+  _LoadNumberFromRegistry($RegistryKey, "AppendToOutputFile", $PotentialAppendToFile, $PotentialAppendToFile)
+  If ($PotentialAppendToFile > 0) Then
+    $AppendToOutputFile = 1
+  Else
+    $AppendToOutputFile = 2
+  EndIf
+  $PotentialAppendToFile = $AppendToLogFile
+  _LoadNumberFromRegistry($RegistryKey, "AppendToLogFile", $PotentialAppendToFile, $PotentialAppendToFile)
+  If ($PotentialAppendToFile > 0) Then
+    $AppendToLogFile = 1
+  Else
+    $AppendToLogFile = 2
+  EndIf
 
   ;TODO: This is some ugly code!
-  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "VerboseOn")
-  If IsNumber($PotentialValue) And Not @error Then $VerboseOn = $PotentialValue
-  SetError(0)
-
-  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "CPUThrottle")
-  If IsNumber($PotentialValue) And Not @error Then $CPUThrottle = $PotentialValue
-  SetError(0)
-
   $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "PathSeparator")
   If IsString($PotentialValue) And Not @error Then $PathSeparator = $PotentialValue
   SetError(0)
@@ -370,22 +385,6 @@ Func _LoadConfigFromRegistry($TargetDrive)
     If ($PotentialValue > 0) Then $AppendToOutputFile = True
   EndIf
 
-  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "ServiceCycleFrequency")
-  If IsNumber($PotentialValue) And Not @error Then $ServiceCycleFrequency = $PotentialValue
-  SetError(0)
-
-  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "ServiceStartupDelay")
-  If IsNumber($PotentialValue) And Not @error Then $ServiceStartupDelay = $PotentialValue
-  SetError(0)
-
-  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "CachePurgeFrequency")
-  If IsNumber($PotentialValue) And Not @error Then $CachePurgeFrequency = $PotentialValue
-  SetError(0)
-
-  $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "MaxUSNEntriesToProcess")
-  If IsNumber($PotentialValue) And Not @error Then $MaxUSNEntriesToProcess = $PotentialValue
-  SetError(0)
-
   $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "StatusToFile")
   If IsString($PotentialValue) And Not @error Then $StatusToFile = $PotentialValue
   SetError(0)
@@ -413,16 +412,16 @@ Func _LoadNumberFromRegistry($Key, $Value, $DefaultValue, ByRef $Variable)
     $Variable = $PotentialValue
     Return True
   ElseIf @error Then
-    ConsoleWriteError("Error reading registry value '" & $Value & "'.  " & @error & @CRLF)
+    _ConsoleWriteError("Error reading registry value '" & $Value & "'.  " & @error)
     ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
     $Variable = $DefaultValue
     Return False
   ElseIf Not IsNumber($PotentialValue) Then
     If ($PotentialValue = "") Then
-      If ($VerboseOn > 2) Then ConsoleWrite("Invalid value for registry value '" & $Key & "' '" & $Value & "' got '" & $PotentialValue & "'.  Number expected."  & @CRLF)
+      _ConsoleWriteVerbose(3, "", "Invalid value for registry value '" & $Key & "' '" & $Value & "' got '" & $PotentialValue & "'.  Number expected." )
       $Variable = $DefaultValue
     Else
-      ConsoleWriteError("Invalid value for registry value '" & $Key & "' '" & $Value & "' got '" & $PotentialValue & "'.  Number expected."  & @CRLF)
+      _ConsoleWriteError("Invalid value for registry value '" & $Key & "' '" & $Value & "' got '" & $PotentialValue & "'.  Number expected." )
       ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
       $Variable = $DefaultValue
     EndIf
@@ -441,12 +440,12 @@ Func _LoadBoolFromRegistry($Key, $Value, $DefaultValue, ByRef $Variable)
     EndIf
     Return True
   ElseIf $ReadError Then
-    ConsoleWriteError("Error reading registry value '" & $Value & "'.  " & $ReadError & @CRLF)
+    _ConsoleWriteError("Error reading registry value '" & $Value & "'.  " & $ReadError)
     ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
     $Variable = $DefaultValue
     Return False
   ElseIf Not IsNumber($PotentialValue) Then
-    ConsoleWriteError("Invalid value for registry value '" & $Key & "' '" & $Value & "'.  Number expected but found '" & $PotentialValue & "'."  & @CRLF)
+    _ConsoleWriteError("Invalid value for registry value '" & $Key & "' '" & $Value & "'.  Number expected but found '" & $PotentialValue & "'." )
     ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
     $Variable = $DefaultValue
     Return False
@@ -458,14 +457,14 @@ Func _MainProcess()
   Local $FSUTILPid = Run("fsutil usn queryjournal " & $TargetDrive, @ScriptDir, @SW_HIDE, $STDOUT_CHILD)
   ProcessWaitClose($FSUTILPid)
   Local $FSUTILResult = StdoutRead($FSUTILPid)
-  If $VerboseOn > 0 Then ConsoleWrite($FSUTILResult)
+  _ConsoleWriteVerbose(1, "", $FSUTILResult)
   If (StringInStr($FSUTILResult, "First Usn") < 1) Then
-    ConsoleWriteError("The USN Journal is not enabled on " & $TargetDrive & "." & @CRLF & @CRLF)
-    ConsoleWriteError("On Windows 2008 and higher you can use the 'fsutil' tool to enable the USN Journal." & @CRLF & @CRLF)
-    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    _ConsoleWriteError("The USN Journal is not enabled on " & $TargetDrive & "." & @CRLF)
+    _ConsoleWriteError("On Windows 2008 and higher you can use the 'fsutil' tool to enable the USN Journal." & @CRLF)
+    _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
     Exit
   Else
-    If $VerboseOn > 0 Then ConsoleWrite("USN Journal is enabled for " & $TargetDrive & "." & @CRLF)
+    _ConsoleWriteVerbose(1, "", "USN Journal is enabled for " & $TargetDrive & ".")
     ;We can check from the fsutil output if $MinUSN is still in the journal and if
     ; the most recent USN is way too far ahead to make the rest of the USN
     ; processing worth while.
@@ -492,33 +491,33 @@ Func _MainProcess()
     Next
   EndIf
 
-  ConsoleWrite("RelativePathPrefix: " & $RelativePathPrefix & @CRLF)
+  _ConsoleWriteLine("RelativePathPrefix: " & $RelativePathPrefix)
 
   ; If the MinUSN (-m) no longer exists in the journal, exit.
   If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
-    ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
-    ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
-    ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
-    ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
-    ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
-    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    _ConsoleWriteLine("Minimum Acceped USN: " & $MinUSN)
+    _ConsoleWriteLine("Minimum Found USN: " & $FirstUSN)
+    _ConsoleWriteLine("Maximum Found USN: " & $MaxUSN)
+    _ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF)
+    _ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF)
+    _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
     Return False
   EndIf
 
   ; If there are more than MaxUSNEntriesToProcess (-M) entries in the journal, exit.
   If ((($MaxUSN - $MinUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN > 0) And (Not $ServiceMode)) Then
-    ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
-    ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
-    ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
-    ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF & @CRLF)
-    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    _ConsoleWriteLine("Minimum Acceped USN: " & $MinUSN)
+    _ConsoleWriteLine("Minimum Found USN: " & $FirstUSN)
+    _ConsoleWriteLine("Maximum Found USN: " & $MaxUSN)
+    _ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF)
+    _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
     Return False
   ElseIf ((($MaxUSN - $FirstUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN = 0)) Then
-    ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
-    ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
-    ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
-    ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF & @CRLF)
-    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    _ConsoleWriteLine("Minimum Acceped USN: " & $MinUSN)
+    _ConsoleWriteLine("Minimum Found USN: " & $FirstUSN)
+    _ConsoleWriteLine("Maximum Found USN: " & $MaxUSN)
+    _ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF)
+    _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
     Return False
   EndIf
 
@@ -528,7 +527,7 @@ Func _MainProcess()
   ElseIf FileExists(@ScriptDir & "\ExtractUsnJrnl.exe") Then
     $ExtractUsnJrnlPath = @ScriptDir & "\"
   Else
-    ConsoleWriteError("ExtractUsnJrnl.exe not found!" & @CRLF)
+    _ConsoleWriteError("ExtractUsnJrnl.exe not found!")
     Return False
   EndIf
 
@@ -537,7 +536,7 @@ Func _MainProcess()
 
   ; Delete $File if it exists
   If FileExists($File) Then
-    If $VerboseOn > 0 Then ConsoleWrite("Deleting previously extracted USN Journal." & @CRLF)
+    _ConsoleWriteVerbose(1, "", "Deleting previously extracted USN Journal.")
     FileDelete($File)
   EndIf
 
@@ -545,20 +544,20 @@ Func _MainProcess()
   If (StringLen($OutputToFile) > 0) Then
     $OutputFile = FileOpen($OutputToFile, $OutputFileEncoding + $AppendToOutputFile)
     If @error Then
-      ConsoleWriteError("Error creating: " & $OutputToFile & @CRLF)
+      ConsoleWriteError("Error creating: " & $OutputToFile)
       Return False
     EndIf
   EndIf
 
   ; Here we call the ExtractUsnJrnl.exe to extract a copy of the USN Journal from
   ; the target drive
-  ConsoleWrite("Extracting USN Journal with ExtractUsnJrnl.exe" & @CRLF)
+  _ConsoleWriteLine("Extracting USN Journal with ExtractUsnJrnl.exe")
   ;TODO: Maybe we allow for specifying the working directory used on the next line
   ; so the caller has more control over where the temporary file is stored.
   Local $ExtractUsnJrnlPid = Run($ExtractUsnJrnlPath & "ExtractUsnJrnl.exe " & $TargetDrive, $ExtractUsnJrnlPath, @SW_HIDE, $STDOUT_CHILD)
   ProcessWaitClose($ExtractUsnJrnlPid)
   Local $ExtractUsnJrnlResult = StdoutRead($ExtractUsnJrnlPid)
-  If $VerboseOn > 0 Then ConsoleWrite($ExtractUsnJrnlResult)
+  _ConsoleWriteVerbose(1, "", $ExtractUsnJrnlResult)
   Sleep($CPUThrottle * 10)
 
   ;For Testing: To actually use a USN Journal file other than the one just
@@ -566,16 +565,16 @@ Func _MainProcess()
   ;$File = $ExtractUsnJrnlPath & "\$UsnJrnl_$J.bin-rds1-wak-C"
 
   If Not FileExists($File) Then
-  	ConsoleWrite("Error: Could not find extracted USN Journal file.  Maybe ExtractUsnJrnl.exe failed." & @CRLF)
+  	_ConsoleWriteError("Error: Could not find extracted USN Journal file.  Maybe ExtractUsnJrnl.exe failed.")
   	Return False
   EndIf
   $TimestampStart = @YEAR & "-" & @MON & "-" & @MDAY & "_" & @HOUR & "-" & @MIN & "-" & @SEC
 
-  ConsoleWrite("Decoding $UsnJrnl info..." & @CRLF)
+  _ConsoleWriteLine("Decoding $UsnJrnl info...")
   $tBuffer = DllStructCreate("byte[" & $Record_Size & "]")
   $hFile = _WinAPI_CreateFile("\\.\" & $File,2,2,7)
   If $hFile = 0 Then
-  	ConsoleWrite("Error: Creating handle on file" & @CRLF)
+  	_ConsoleWriteError("Error: Creating handle on file")
   	Return False
   EndIf
   $InputFileSize = _WinAPI_GetFileSizeEx($hFile)
@@ -585,8 +584,8 @@ Func _MainProcess()
   $CurrentPage = 0
   Local $ProcessedPages = 0
   ;For $CurrentPage = 0 To $MaxRecords-1
-  ConsoleWrite("Max Records: " & $MaxRecords & @CRLF)
-  ConsoleWrite("Input File Size: " & $InputFileSize & @CRLF)
+  _ConsoleWriteLine("Max Records: " & $MaxRecords)
+  _ConsoleWriteLine("Input File Size: " & $InputFileSize)
   While (($CurrentPage < $MaxRecords) And (($ProcessedPages < $MaxUSNEntriesToProcess) or ($MaxUSNEntriesToProcess < 1)))
     ; TODO: Time limiting code here
 
@@ -600,31 +599,31 @@ Func _MainProcess()
     ; math is alligned with reality.
     If (($CurrentPage > 0) And ($MaxUSN > 0)) Then
       If (($MaxUSN + (5500 * 57 * 72)) < $MinUSN) Then
-        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 5000) & " (5000 pages)." & @CRLF)
+        _ConsoleWriteVerbose(1, "", "Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 5000) & " (5000 pages).")
         $CurrentPage = $CurrentPage + 5000
         Sleep($CPUThrottle)
       ElseIf (($MaxUSN + (1100 * 57 * 72)) < $MinUSN) Then
-        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 1000) & " (1000 pages)." & @CRLF)
+        _ConsoleWriteVerbose(1, "", "Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 1000) & " (1000 pages).")
         $CurrentPage = $CurrentPage + 1000
         Sleep($CPUThrottle)
       ElseIf (($MaxUSN + (550 * 57 * 72)) < $MinUSN) Then
-        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 500) & " (500 pages)." & @CRLF)
+        _ConsoleWriteVerbose(1, "", "Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 500) & " (500 pages).")
         $CurrentPage = $CurrentPage + 500
         Sleep($CPUThrottle)
       ElseIf (($MaxUSN + (110 * 57 * 72)) < $MinUSN) Then
-        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 100) & " (100 pages)." & @CRLF)
+        _ConsoleWriteVerbose(1, "", "Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 100) & " (100 pages).")
         $CurrentPage = $CurrentPage + 100
         Sleep($CPUThrottle)
       ElseIf (($MaxUSN + (55 * 57 * 72)) < $MinUSN) Then
-        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 50) & " (50 pages)." & @CRLF)
+        _ConsoleWriteVerbose(1, "", "Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 50) & " (50 pages).")
         $CurrentPage = $CurrentPage + 50
         Sleep($CPUThrottle)
       ElseIf (($MaxUSN + (11 * 57 * 72)) < $MinUSN) Then
-        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 10) & " (10 pages)." & @CRLF)
+        _ConsoleWriteVerbose(1, "", "Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 10) & " (10 pages).")
         $CurrentPage = $CurrentPage + 10
         Sleep($CPUThrottle)
       ElseIf (($MaxUSN + (5.5 * 57 * 72)) < $MinUSN) Then
-        If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 5) & " (5 pages)." & @CRLF)
+        _ConsoleWriteVerbose(1, "", "Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 5) & " (5 pages).")
         $CurrentPage = $CurrentPage + 5
         Sleep($CPUThrottle)
       Else
@@ -643,15 +642,15 @@ Func _MainProcess()
   Wend
   ;Next
 
-  ConsoleWrite("Decoding finished" & @CRLF)
-  ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
-  ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
-  ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
+  _ConsoleWriteLine("Decoding finished")
+  _ConsoleWriteLine("Minimum Acceped USN: " & $MinUSN)
+  _ConsoleWriteLine("Minimum Found USN: " & $FirstUSN)
+  _ConsoleWriteLine("Maximum Found USN: " & $MaxUSN)
 
   ; If $MinUSN > $MaxUSN then the provided $MinUSN cannot have been correct
   If ($MinUSN > $MaxUSN) Then
-    ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was higher than the highest USN found in the journal.  The highest USN actually found in the journal will now be used as the baseline." & @CRLF & @CRLF)
-    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    _ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was higher than the highest USN found in the journal.  The highest USN actually found in the journal will now be used as the baseline." & @CRLF)
+    _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
     _WinAPI_CloseHandle($hFile)
     Return False
   EndIf
@@ -660,9 +659,9 @@ Func _MainProcess()
   ; last time we ran and now (somehow missed by the check earlier).  DO A FULL
   ; BACKUP!
   If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
-    ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF & @CRLF)
-    ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF & @CRLF)
-    ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF & @CRLF)
+    _ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF)
+    _ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF)
+    _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
     _WinAPI_CloseHandle($hFile)
     Return False
   EndIf
@@ -670,7 +669,7 @@ Func _MainProcess()
   ; Resolve MtfReference numbers to real file paths.  This is still our biggest
   ; performance bottleneck and needs more attention
   $MFTReferences = _ArrayUnique($MFTReferences, 0, 0, 0, $ARRAYUNIQUE_NOCOUNT, $ARRAYUNIQUE_MATCH)
-  If $VerboseOn > 0 Then ConsoleWrite("Accepted USNs: " & _ArrayToString($MFTReferences, ", ") & @CRLF)
+  _ConsoleWriteVerbose(1, "", "Accepted USNs: " & _ArrayToString($MFTReferences, ", "))
   For $RefIndex = 1 To UBound($MFTReferences)-1
     $FullFileName = MftRef2Name($MFTReferences[$RefIndex])
     If ($IgnoreSysVolInfo) And (StringInStr($FullFileName, "System Volume Information") > 0) And (StringInStr($FullFileName, "System Volume Information") < 5) Then
@@ -698,7 +697,7 @@ Func _MainProcess()
           If (StringLen($OutputToFile) > 0) Then
             FileWriteLine($OutputFile, $ParentTrail)
           Else
-            ConsoleWrite($ParentTrail & @CRLF)
+            _ConsoleWriteLine($ParentTrail)
           EndIf
           _ArrayAdd($OutputEntries, $ParentTrail)
         EndIf
@@ -709,16 +708,16 @@ Func _MainProcess()
       If (StringLen($OutputToFile) > 0) Then
         FileWriteLine($OutputFile, $FullFileName)
       Else
-        ConsoleWrite($FullFileName & @CRLF)
+        _ConsoleWriteLine($FullFileName)
       EndIf
       _ArrayAdd($OutputEntries, $FullFileName)
     EndIf
     Sleep($CPUThrottle)
   Next
 
-  If $VerboseOn > 2 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, @CRLF) & @CRLF)
-  If $VerboseOn > 2 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, @CRLF) & @CRLF)
-  If $VerboseOn > 2 Then ConsoleWrite("MftRefFullNames: " & _ArrayToString($MftRefFullNames, @CRLF) & @CRLF)
+  _ConsoleWriteVerbose(3, "", "MftRefParents: " & _ArrayToString($MftRefParents, @CRLF))
+  _ConsoleWriteVerbose(3, "", "MftRefNames: " & _ArrayToString($MftRefNames, @CRLF))
+  _ConsoleWriteVerbose(3, "", "MftRefFullNames: " & _ArrayToString($MftRefFullNames, @CRLF))
 
   ; Close the output file
   If (StringLen($OutputToFile) > 0) Then
@@ -768,17 +767,17 @@ Func _UsnDecodeRecord($Record)
 	$UsnJrnlFileName = StringMid($Record,121,$UsnJrnlFileNameLength*2)
 	$UsnJrnlFileName = _UnicodeHexToStr($UsnJrnlFileName)
 	If $VerboseOn > 3 Then
-		ConsoleWrite("$UsnJrnlFileReferenceNumber: " & $UsnJrnlFileReferenceNumber & @CRLF)
-		ConsoleWrite("$UsnJrnlMFTReferenceSeqNo: " & $UsnJrnlMFTReferenceSeqNo & @CRLF)
-		ConsoleWrite("$UsnJrnlParentFileReferenceNumber: " & $UsnJrnlParentFileReferenceNumber & @CRLF)
-		ConsoleWrite("$UsnJrnlParentReferenceSeqNo: " & $UsnJrnlParentReferenceSeqNo & @CRLF)
-		ConsoleWrite("$UsnJrnlUsn: " & $UsnJrnlUsn & @CRLF)
-		ConsoleWrite("$UsnJrnlTimestamp: " & $UsnJrnlTimestamp & @CRLF)
-		ConsoleWrite("$UsnJrnlReason: " & $UsnJrnlReason & @CRLF)
-;		ConsoleWrite("$UsnJrnlSourceInfo: " & $UsnJrnlSourceInfo & @CRLF)
-;		ConsoleWrite("$UsnJrnlSecurityId: " & $UsnJrnlSecurityId & @CRLF)
-		ConsoleWrite("$UsnJrnlFileAttributes: " & $UsnJrnlFileAttributes & @CRLF)
-		ConsoleWrite("$UsnJrnlFileName: " & $UsnJrnlFileName & @CRLF)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlFileReferenceNumber: " & $UsnJrnlFileReferenceNumber)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlMFTReferenceSeqNo: " & $UsnJrnlMFTReferenceSeqNo)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlParentFileReferenceNumber: " & $UsnJrnlParentFileReferenceNumber)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlParentReferenceSeqNo: " & $UsnJrnlParentReferenceSeqNo)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlUsn: " & $UsnJrnlUsn)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlTimestamp: " & $UsnJrnlTimestamp)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlReason: " & $UsnJrnlReason)
+;		_ConsoleWriteVerbose(3, "", "$UsnJrnlSourceInfo: " & $UsnJrnlSourceInfo)
+;		_ConsoleWriteVerbose(3, "", "$UsnJrnlSecurityId: " & $UsnJrnlSecurityId)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlFileAttributes: " & $UsnJrnlFileAttributes)
+		_ConsoleWriteVerbose(3, "", "$UsnJrnlFileName: " & $UsnJrnlFileName)
 	EndIf
 
   ; We're going to need to know that the first USN in the USN Journal is larger
@@ -788,7 +787,7 @@ Func _UsnDecodeRecord($Record)
   EndIf
 
   ; We will need the maximum USN value so we know where to kick off the next run
-  If $VerboseOn > 3 Then ConsoleWrite("This USN: " & $UsnJrnlUsn & @CRLF)
+  _ConsoleWriteVerbose(4, "", "This USN: " & $UsnJrnlUsn)
   If ($UsnJrnlUsn > $MaxUSN) Then
     $MaxUSN = $UsnJrnlUsn
   EndIf
@@ -803,9 +802,9 @@ Func _UsnDecodeRecord($Record)
   Local $PaternIndex = 0
   ;Local $SkipRecord = False
   For $PaternIndex = 1 To UBound($ExcludeFilePatterns)-1
-    If $VerboseOn > 2 Then ConsoleWrite("Testing file name against pattern: '" & $UsnJrnlFileName & "', '" & $ExcludeFilePatterns[$PaternIndex] & "'" & @CRLF)
+    _ConsoleWriteVerbose(3, "", "Testing file name against pattern: '" & $UsnJrnlFileName & "', '" & $ExcludeFilePatterns[$PaternIndex] & "'")
     If (StringRegExp($UsnJrnlFileName, $ExcludeFilePatterns[$PaternIndex], $STR_REGEXPMATCH)) Then
-      If $VerboseOn > 1 Then ConsoleWrite("Excluding file based on pattern match: '" & $UsnJrnlFileName & "', '" & $ExcludeFilePatterns[$PaternIndex] & "'" & @CRLF)
+      _ConsoleWriteVerbose(2, "", "Excluding file based on pattern match: '" & $UsnJrnlFileName & "', '" & $ExcludeFilePatterns[$PaternIndex] & "'")
       ;$SkipRecord = True
       Return True
     EndIf
@@ -818,7 +817,7 @@ Func _UsnDecodeRecord($Record)
     ;  number, we may as well add them to the cache.  MftRef2Name might find
     ;  them useful.
 
-    If $VerboseOn > 2 Then ConsoleWrite("Reference -> Parent from USN Journal: " & $UsnJrnlFileReferenceNumber & " -> " & $UsnJrnlParentFileReferenceNumber & @CRLF)
+    _ConsoleWriteVerbose(3, "", "Reference -> Parent from USN Journal: " & $UsnJrnlFileReferenceNumber & " -> " & $UsnJrnlParentFileReferenceNumber)
     _ArrayAdd($MftRefParents, ":" & $UsnJrnlFileReferenceNumber & ":" & $UsnJrnlParentFileReferenceNumber)
     _ArrayAdd($MftRefNames, ":" & $UsnJrnlFileReferenceNumber & ":" & $UsnJrnlFileName)
     _ArrayAdd($MFTReferences, $UsnJrnlFileReferenceNumber)
@@ -830,25 +829,25 @@ Func MftRef2Name($IndexNumber)
   Local $FullFileName = ""
 
   If Not $Initialised Then
-    If $VerboseOn > 1 Then ConsoleWrite("MftRef2Name: Initailising (this should only happen once)" & @CRLF)
+    _ConsoleWriteVerbose(2, "", "MftRef2Name: Initailising (this should only happen once)")
     $ParentDir = _GenDirArray($TargetDrive & "\")
     Global $MftRefArray[$DirArray[0]+1]
 
     $hDisk = _WinAPI_CreateFile("\\.\" & $TargetDrive,2,2,7)
     If $hDisk = 0 Then
-      ConsoleWriteError("MftRef2Name Error: CreateFile: " & _WinAPI_GetLastErrorMessage() & @CRLF)
+      _ConsoleWriteError("MftRef2Name Error: CreateFile: " & _WinAPI_GetLastErrorMessage())
       Return
     EndIf
 
     $MFTEntry = _FindMFT(0)
     If $MFTEntry = "" Then ;something wrong with record for $MFT
-      ConsoleWriteError("MftRef2Name Error: Getting MFT record 0" & @CRLF)
+      _ConsoleWriteError("MftRef2Name Error: Getting MFT record 0")
       Return
     EndIf
 
     $MFT = _DecodeMFTRecord0($MFTEntry, 0)        ;produces DataQ for $MFT, record 0
     If $MFT = "" Then
-      ConsoleWriteError("MftRef2Name Error: Parsing the MFT record 0" & @CRLF)
+      _ConsoleWriteError("MftRef2Name Error: Parsing the MFT record 0")
       Return
     EndIf
 
@@ -887,8 +886,8 @@ Func MftRef2Name($IndexNumber)
     	$TestParentRef = $TmpRef[0]
       ;$BottomRef = $TestParentRef
       $FileName = $TestFileName
-      ConsoleWrite("I looked up this file's parent and it is: " & $TestParentRef & @CRLF)
-      ConsoleWrite("I looked up this file's name and it is: " & $FileName & @CRLF)
+      ConsoleWrite("I looked up this file's parent and it is: " & $TestParentRef)
+      ConsoleWrite("I looked up this file's name and it is: " & $FileName)
     Else
       $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[1]
       $FileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[1]
@@ -916,14 +915,14 @@ Func MftRef2Name($IndexNumber)
         If (($ParentIndex > -1) And ($NameIndex > -1)) Then
           $TestFileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[2]
           $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[2]
-          If $VerboseOn > 1 Then ConsoleWrite("I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?" & @CRLF)
+          _ConsoleWriteVerbose(2, "", "I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?")
         Else
       		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
       		$NewRecord = _FindFileMFTRecord($TestParentRef)
       		_DecodeMFTRecord($NewRecord,2)
       		$TmpRef = _GetParent()
       		If @error then ExitLoop
-          If $VerboseOn > 1 Then ConsoleWrite("Reference -> Parent from $Mft: " & $TestParentRef & " -> " & $TmpRef[0] & @CRLF)
+          _ConsoleWriteVerbose(2, "", "Reference -> Parent from $Mft: " & $TestParentRef & " -> " & $TmpRef[0])
           _ArrayAdd($MftRefParents, ":" & $TestParentRef & ":" & $TmpRef[0])
           _ArrayAdd($MftRefNames, ":" & $TestParentRef & ":" & $TmpRef[1])
         	$TestFileName = $TmpRef[1]
@@ -939,7 +938,7 @@ Func MftRef2Name($IndexNumber)
       ; This should never happen but just in case it does we will output an
       ;  error message.
       If ((Not $TestParentRef = 5) Or ($LoopCounter > 500)) Then
-        ConsoleWriteError("MftRef2Name: Unable to resolve $Mft entry to volume root.  " & $TestParentRef & " != 5" & @CRLF)
+        _ConsoleWriteError("MftRef2Name: Unable to resolve $Mft entry to volume root.  " & $TestParentRef & " != 5")
         Exit
       EndIf
 
@@ -949,10 +948,10 @@ Func MftRef2Name($IndexNumber)
 
     If ($RelativePaths) Then
       $FullFileName = $RelativePathPrefix & $ResolvedPath & $PathSeparator & $FileName
-      If $VerboseOn > 1 Then ConsoleWrite("'" & $FullFileName & "' should be a RELATIVE path." & @CRLF)
+      _ConsoleWriteVerbose(2, "", "'" & $FullFileName & "' should be a RELATIVE path.")
     Else
       $FullFileName = $TargetDrive & $PathSeparator & $ResolvedPath & $PathSeparator & $FileName
-      If $VerboseOn > 1 Then ConsoleWrite("'" & $FullFileName & "' should be an ABSOLUTE path." & @CRLF)
+      _ConsoleWriteVerbose(2, "", "'" & $FullFileName & "' should be an ABSOLUTE path.")
     EndIf
 
   	Return StringReplace($FullFileName, $PathSeparator & $PathSeparator, $PathSeparator)
@@ -961,16 +960,45 @@ EndFunc
 
 ;TODO: The following functions need to be populated and calls to the original
 ; functions replaced
-Func _ConsoleWrite($Text)
+Func _ConsoleWriteLine($Text)
+  _ConsoleWrite($Text & @CRLF)
+EndFunc
 
+Func _ConsoleWrite($Text)
+  ConsoleWrite($Text)
+  If (StringLen($LogToFile) > 0) Then
+    _WriteToLogFile($LogToFile, @TAB & "  " & $Text)
+  EndIf
 EndFunc
 
 Func _ConsoleWriteError($Text)
+  ConsoleWriteError($Text & @CRLF)
+  If (StringLen($LogToFile) > 0) Then
+    ; Log to the "error" log
+    _WriteToLogFile($LogToFile & ".errors", @TAB & "  " & $Text & @CRLF)
 
+    ; Also log to the normal log so there can be some context
+    _WriteToLogFile($LogToFile, @TAB & "! " & $Text & @CRLF)
+  EndIf
 EndFunc
 
 Func _ConsoleWriteVerbose($Level, $Type, $Text)
+  If ($Level <= $VerboseOn) Then
+    ConsoleWrite($Text & @CRLF)
+  EndIf
 
+  If ($Level <= $VerboseToFileOn) Then
+    If (StringLen($LogToFile) > 0) Then
+      _WriteToLogFile($LogToFile & ".verbose", @TAB & "  " & $Text & @CRLF)
+    EndIf
+  EndIf
+EndFunc
+
+Func _WriteToLogFile($File, $Text)
+  Local $LogFile = FileOpen($File & ".log", $OutputFileEncoding + $AppendToLogFile)
+  FileWrite($LogFile, _NowCalc() & $Text)
+  FileFlush($LogFile)
+  FileClose($LogFile)
 EndFunc
 
 Func HelpMessage()

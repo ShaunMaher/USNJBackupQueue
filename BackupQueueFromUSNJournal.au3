@@ -38,6 +38,7 @@
 #include <GUIConstantsEx.au3>
 #include <WindowsConstants.au3>
 #include <StaticConstants.au3>
+#include <StringConstants.au3>
 #include <EditConstants.au3>
 #include <GuiEdit.au3>
 #Include <FileConstants.au3>
@@ -85,8 +86,13 @@ Global $ServiceCycleFrequency = 15000    ; Every 15 seconds
 Global $ServiceStartupDelay = 5000        ; 5 seconds
 Global $CachePurgeFrequency = 86400000    ; Daily
 Global $OutputEntries[1]
+Global $ExcludeFilePatterns[1]
 Global $LastPageMaxUSN = 0
 Global $CurrentPage = 0
+Global $ProcessPriority = -1
+
+_ArrayAdd($ExcludeFilePatterns, "(?i)\.frx$")
+_ArrayAdd($ExcludeFilePatterns, "(?i)\.tmp$")
 
 ; Load some default settings from the registry
 _LoadConfigFromRegistry("")
@@ -212,6 +218,13 @@ If @error Then
 	Exit
 EndIf
 
+; Set Process Priority of self
+If $VerboseOn > 0 Then ConsoleWrite ("My PID: " & @AutoItPID & @CRLF)
+If ($ProcessPriority > -1) Then
+  If $VerboseOn > 0 Then ConsoleWrite ("Setting my process priority to: " & $ProcessPriority & @CRLF)
+  ProcessSetPriority (@AutoItPID, $ProcessPriority)
+EndIf
+
 If ($ServiceMode) Then
   ; We need to load the $MinUSN from the last time we ran from the registry
   ;https://www.autoitscript.com/autoit3/docs/functions/RegRead.htm
@@ -235,12 +248,19 @@ If ($ServiceMode) Then
     ; Check the last run time against the current time
     $Now = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
 
+    Local $CurrentProcessPriority = $ProcessPriority
+
     ; Reload settings from the regisrty.  This way we don't need to restart the
     ;  service each time a setting is changed
     ;TODO: this will override command line options which we didn't want to do.
     _LoadConfigFromRegistry($TargetDrive)
 
-    If $VerboseOn > 1 Then ConsoleWrite("LastCycle: " & $LastCycle & ", Now: " & $Now & @CRLF)
+    If (($ProcessPriority > -1) And Not ($ProcessPriority = $CurrentProcessPriority)) Then
+      If $VerboseOn > 0 Then ConsoleWrite ("Setting my process priority to: " & $ProcessPriority & @CRLF)
+      ProcessSetPriority (@AutoItPID, $ProcessPriority)
+    EndIf
+
+    If $VerboseOn > 2 Then ConsoleWrite("LastCycle: " & $LastCycle & ", Now: " & $Now & @CRLF)
     If (($LastCycle + ($ServiceCycleFrequency / 1000)) < $Now) Then
       If $VerboseOn > 0 Then ConsoleWrite("Running _MainProcess" & @CRLF)
       $LastCycle = $Now
@@ -295,7 +315,9 @@ Func _LoadConfigFromRegistry($TargetDrive)
   ;_LoadNumberFromRegistry($RegistryKey, "VerboseOn", Null, $VerboseOn)
   ;_LoadStringFromRegistry($RegistryKey, "PathSeparator", Null, $PathSeparator)
   ;_LoadBoolFromRegistry($RegistryKey, "IgnoreRecycleBin", Null, $IgnoreRecycleBin)
-  _LoadBoolFromRegistry($RegistryKey, "RelativePaths", $RelativePaths, $RelativePaths)
+  _LoadNumberFromRegistry($RegistryKey, "MaxUSNEntriesToProcess", $MaxUSNEntriesToProcess, $MaxUSNEntriesToProcess)
+  _LoadNumberFromRegistry($RegistryKey, "VerboseOn", $VerboseOn, $VerboseOn)
+  _LoadNumberFromRegistry($RegistryKey, "ProcessPriority", $ProcessPriority, $ProcessPriority)
 
   ;TODO: This is some ugly code!
   $PotentialValue = RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "VerboseOn")
@@ -396,9 +418,14 @@ Func _LoadNumberFromRegistry($Key, $Value, $DefaultValue, ByRef $Variable)
     $Variable = $DefaultValue
     Return False
   ElseIf Not IsNumber($PotentialValue) Then
-    ConsoleWriteError("Invalid value for registry value '" & $Key & "' '" & $Value & "'.  Number expected."  & @CRLF)
-    ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
-    $Variable = $DefaultValue
+    If ($PotentialValue = "") Then
+      If ($VerboseOn > 2) Then ConsoleWrite("Invalid value for registry value '" & $Key & "' '" & $Value & "' got '" & $PotentialValue & "'.  Number expected."  & @CRLF)
+      $Variable = $DefaultValue
+    Else
+      ConsoleWriteError("Invalid value for registry value '" & $Key & "' '" & $Value & "' got '" & $PotentialValue & "'.  Number expected."  & @CRLF)
+      ;TODO: Only change the value to $DefaultValue if DefaultValue is not Null?
+      $Variable = $DefaultValue
+    EndIf
     Return False
   EndIf
 EndFunc
@@ -479,7 +506,7 @@ Func _MainProcess()
   EndIf
 
   ; If there are more than MaxUSNEntriesToProcess (-M) entries in the journal, exit.
-  If ((($MaxUSN - $MinUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN > 0)) Then
+  If ((($MaxUSN - $MinUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN > 0) And (Not $ServiceMode)) Then
     ConsoleWrite("Minimum Acceped USN: " & $MinUSN & @CRLF)
     ConsoleWrite("Minimum Found USN: " & $FirstUSN & @CRLF)
     ConsoleWrite("Maximum Found USN: " & $MaxUSN & @CRLF)
@@ -556,10 +583,11 @@ Func _MainProcess()
   $MaxUSN = 0
   $LastPageMaxUSN = 0
   $CurrentPage = 0
+  Local $ProcessedPages = 0
   ;For $CurrentPage = 0 To $MaxRecords-1
   ConsoleWrite("Max Records: " & $MaxRecords & @CRLF)
   ConsoleWrite("Input File Size: " & $InputFileSize & @CRLF)
-  While $CurrentPage < $MaxRecords
+  While (($CurrentPage < $MaxRecords) And (($ProcessedPages < $MaxUSNEntriesToProcess) or ($MaxUSNEntriesToProcess < 1)))
     ; TODO: Time limiting code here
 
     ; Each page is 4096 bytes long and, as far as I can tell, contains a maximum
@@ -599,6 +627,8 @@ Func _MainProcess()
         If $VerboseOn > 0 Then ConsoleWrite("Skipping from page " & $CurrentPage & " to page " & ($CurrentPage + 5) & " (5 pages)." & @CRLF)
         $CurrentPage = $CurrentPage + 5
         Sleep($CPUThrottle)
+      Else
+        $ProcessedPages = $ProcessedPages + 1
       EndIf
     EndIf
 
@@ -686,9 +716,9 @@ Func _MainProcess()
     Sleep($CPUThrottle)
   Next
 
-  If $VerboseOn > 1 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, @CRLF) & @CRLF)
-  If $VerboseOn > 1 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, @CRLF) & @CRLF)
-  If $VerboseOn > 1 Then ConsoleWrite("MftRefFullNames: " & _ArrayToString($MftRefFullNames, @CRLF) & @CRLF)
+  If $VerboseOn > 2 Then ConsoleWrite("MftRefParents: " & _ArrayToString($MftRefParents, @CRLF) & @CRLF)
+  If $VerboseOn > 2 Then ConsoleWrite("MftRefNames: " & _ArrayToString($MftRefNames, @CRLF) & @CRLF)
+  If $VerboseOn > 2 Then ConsoleWrite("MftRefFullNames: " & _ArrayToString($MftRefFullNames, @CRLF) & @CRLF)
 
   ; Close the output file
   If (StringLen($OutputToFile) > 0) Then
@@ -737,7 +767,7 @@ Func _UsnDecodeRecord($Record)
 	$UsnJrnlFileNameOffset = Dec(_SwapEndian($UsnJrnlFileNameOffset),2)
 	$UsnJrnlFileName = StringMid($Record,121,$UsnJrnlFileNameLength*2)
 	$UsnJrnlFileName = _UnicodeHexToStr($UsnJrnlFileName)
-	If $VerboseOn > 2 Then
+	If $VerboseOn > 3 Then
 		ConsoleWrite("$UsnJrnlFileReferenceNumber: " & $UsnJrnlFileReferenceNumber & @CRLF)
 		ConsoleWrite("$UsnJrnlMFTReferenceSeqNo: " & $UsnJrnlMFTReferenceSeqNo & @CRLF)
 		ConsoleWrite("$UsnJrnlParentFileReferenceNumber: " & $UsnJrnlParentFileReferenceNumber & @CRLF)
@@ -758,7 +788,7 @@ Func _UsnDecodeRecord($Record)
   EndIf
 
   ; We will need the maximum USN value so we know where to kick off the next run
-  If $VerboseOn > 2 Then ConsoleWrite("This USN: " & $UsnJrnlUsn & @CRLF)
+  If $VerboseOn > 3 Then ConsoleWrite("This USN: " & $UsnJrnlUsn & @CRLF)
   If ($UsnJrnlUsn > $MaxUSN) Then
     $MaxUSN = $UsnJrnlUsn
   EndIf
@@ -769,14 +799,28 @@ Func _UsnDecodeRecord($Record)
     $LastPageMaxUSN = $UsnJrnlUsn
   EndIf
 
+  ; Exclude files that match any of the regexp patterns in $ExcludeFilePatterns
+  Local $PaternIndex = 0
+  ;Local $SkipRecord = False
+  For $PaternIndex = 1 To UBound($ExcludeFilePatterns)-1
+    If $VerboseOn > 2 Then ConsoleWrite("Testing file name against pattern: '" & $UsnJrnlFileName & "', '" & $ExcludeFilePatterns[$PaternIndex] & "'" & @CRLF)
+    If (StringRegExp($UsnJrnlFileName, $ExcludeFilePatterns[$PaternIndex], $STR_REGEXPMATCH)) Then
+      If $VerboseOn > 1 Then ConsoleWrite("Excluding file based on pattern match: '" & $UsnJrnlFileName & "', '" & $ExcludeFilePatterns[$PaternIndex] & "'" & @CRLF)
+      ;$SkipRecord = True
+      Return True
+    EndIf
+  Next
+
   ; If this USN is lower then the MinUSN then this change has already been
   ;  actioned on a previous backup run
   If (($UsnJrnlUsn > $MinUSN) Or ($MinUSN = 0)) Then
     ; Here we have a file name, a file reference number and a parent reference
     ;  number, we may as well add them to the cache.  MftRef2Name might find
     ;  them useful.
-    _ArrayAdd($MftRefParents, $UsnJrnlFileReferenceNumber & ":" & $UsnJrnlParentFileReferenceNumber)
-    _ArrayAdd($MftRefNames, $UsnJrnlFileReferenceNumber & ":" & $UsnJrnlFileName)
+
+    If $VerboseOn > 2 Then ConsoleWrite("Reference -> Parent from USN Journal: " & $UsnJrnlFileReferenceNumber & " -> " & $UsnJrnlParentFileReferenceNumber & @CRLF)
+    _ArrayAdd($MftRefParents, ":" & $UsnJrnlFileReferenceNumber & ":" & $UsnJrnlParentFileReferenceNumber)
+    _ArrayAdd($MftRefNames, ":" & $UsnJrnlFileReferenceNumber & ":" & $UsnJrnlFileName)
     _ArrayAdd($MFTReferences, $UsnJrnlFileReferenceNumber)
   EndIf
 EndFunc
@@ -867,11 +911,11 @@ Func MftRef2Name($IndexNumber)
       ; need to ask the file system the same question twice
       Local $LoopCounter = 0;
     	Do
-        $ParentIndex = _ArraySearch($MftRefParents, $TestParentRef & ":", 0, 0, 0, 1)
-        $NameIndex = _ArraySearch($MftRefNames, $TestParentRef & ":", 0, 0, 0, 1)
+        $ParentIndex = _ArraySearch($MftRefParents, ":" & $TestParentRef & ":", 0, 0, 0, 1)
+        $NameIndex = _ArraySearch($MftRefNames, ":" & $TestParentRef & ":", 0, 0, 0, 1)
         If (($ParentIndex > -1) And ($NameIndex > -1)) Then
-          $TestFileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[1]
-          $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[1]
+          $TestFileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[2]
+          $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[2]
           If $VerboseOn > 1 Then ConsoleWrite("I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?" & @CRLF)
         Else
       		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
@@ -879,20 +923,24 @@ Func MftRef2Name($IndexNumber)
       		_DecodeMFTRecord($NewRecord,2)
       		$TmpRef = _GetParent()
       		If @error then ExitLoop
-          If $VerboseOn > 1 Then ConsoleWrite($TestParentRef & " -> " & $TmpRef[0] & @CRLF)
-            _ArrayAdd($MftRefParents, $TestParentRef & ":" & $TmpRef[0])
-            _ArrayAdd($MftRefNames, $TestParentRef & ":" & $TmpRef[1])
-        		$TestFileName = $TmpRef[1]
-        		$TestParentRef = $TmpRef[0]
-          EndIf
+          If $VerboseOn > 1 Then ConsoleWrite("Reference -> Parent from $Mft: " & $TestParentRef & " -> " & $TmpRef[0] & @CRLF)
+          _ArrayAdd($MftRefParents, ":" & $TestParentRef & ":" & $TmpRef[0])
+          _ArrayAdd($MftRefNames, ":" & $TestParentRef & ":" & $TmpRef[1])
+        	$TestFileName = $TmpRef[1]
+        	$TestParentRef = $TmpRef[0]
+        EndIf
     		$ResolvedPath = $TestFileName & $PathSeparator & $ResolvedPath
         $LoopCounter = $LoopCOunter + 1
+
+        ; Take a small sleep
+        Sleep($CPUThrottle / 10)
     	Until (($TestParentRef = 5) Or ($LoopCounter > 500))
 
       ; This should never happen but just in case it does we will output an
       ;  error message.
       If ((Not $TestParentRef = 5) Or ($LoopCounter > 500)) Then
-        ConsoleWriteError("MftRef2Name: Unable to resolve $Mft entry to volume root.  " & $TestParentRef & " != 5")
+        ConsoleWriteError("MftRef2Name: Unable to resolve $Mft entry to volume root.  " & $TestParentRef & " != 5" & @CRLF)
+        Exit
       EndIf
 
       If StringLeft($ResolvedPath,2) = "." & $PathSeparator Then $ResolvedPath = StringTrimLeft($ResolvedPath,2)

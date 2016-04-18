@@ -2,7 +2,7 @@
 #AutoIt3Wrapper_Change2CUI=y
 #AutoIt3Wrapper_Res_Comment=CLI Parser for $UsnJrnl (NTFS)
 #AutoIt3Wrapper_Res_Description=CLI Parser for $UsnJrnl (NTFS)
-#AutoIt3Wrapper_Res_Fileversion=1.0.0.4
+#AutoIt3Wrapper_Res_Fileversion=1.0.0.5
 #AutoIt3Wrapper_Res_requestedExecutionLevel=asInvoker
 #EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
 ;
@@ -28,7 +28,7 @@
 ; from within the AutoIt3 provided SciTE-Lite editor.
 
 ; To create a stand alone executable:
-;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.4 /productversion 1.0.0.4 /productname BackupQueueFromUSNJournal
+;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.5 /productversion 1.0.0.5 /productname BackupQueueFromUSNJournal /icon BackupQueueFromUSNJournal.ico
 ;
 ; Finally, my excuse for code in this script being ugly and inefficient is that
 ; this is the first time I have ever worked with AutoIt code and there are large
@@ -48,7 +48,7 @@
 #Include "MftRef2Name_Functions.au3"
 
 Global $MyName = "BackupQueueFromUSNJournal"
-Global $MyVersion = "1.0.0.4"
+Global $MyVersion = "1.0.0.5"
 Global $DateTimeFormat, $TimestampPrecision
 Global $PrecisionSeparator = "."
 Global $de = "|"
@@ -87,7 +87,6 @@ Global $ServiceCycleFrequency = 15000    ; Every 15 seconds
 ; Global $ServiceStartupDelay = 300000    ; 5 minutes
 Global $ServiceStartupDelay = 5000        ; 5 seconds
 Global $CachePurgeFrequency = 86400000    ; Daily
-Global $OutputEntries[1]
 Global $ExcludeFilePatterns[1]
 Global $LastPageMaxUSN = 0
 Global $CurrentPage = 0
@@ -324,6 +323,7 @@ Func _LoadConfigFromRegistry($TargetDrive)
   _LoadNumberFromRegistry($RegistryKey, "ServiceStartupDelay", $ServiceStartupDelay, $ServiceStartupDelay)
   _LoadNumberFromRegistry($RegistryKey, "CachePurgeFrequency", $CachePurgeFrequency, $CachePurgeFrequency)
   _LoadNumberFromRegistry($RegistryKey, "CPUThrottle", $CPUThrottle, $CPUThrottle)
+  _LoadBoolFromRegistry($RegistryKey, "RelativePaths", $RelativePaths, $RelativePaths)
 
   ; The AppendToXXXXFile variables need to be converted to 1 for append, 2 for
   ;  overwrite
@@ -455,6 +455,7 @@ EndFunc
 Func _MainProcess()
   ; Check that the target drive has the USN journal enabled.
   Local $FSUTILPid = Run("fsutil usn queryjournal " & $TargetDrive, @ScriptDir, @SW_HIDE, $STDOUT_CHILD)
+  local $OutputEntries[1]
   ProcessWaitClose($FSUTILPid)
   Local $FSUTILResult = StdoutRead($FSUTILPid)
   _ConsoleWriteVerbose(1, "", $FSUTILResult)
@@ -868,8 +869,8 @@ Func MftRef2Name($IndexNumber)
   $ResolvedPath = ""
   If StringIsDigit($IndexNumber) Then
     ; _UsnDecodeRecord may have already inserted this file's name and index into the cache
-    $ParentIndex = _ArraySearch($MftRefParents, $IndexNumber & ":", 0, 0, 0, 1)
-    $NameIndex = _ArraySearch($MftRefNames, $IndexNumber & ":", 0, 0, 0, 1)
+    $ParentIndex = _ArraySearch($MftRefParents, ":" & $IndexNumber & ":", 0, 0, 0, 1)
+    $NameIndex = _ArraySearch($MftRefNames, ":" & $IndexNumber & ":", 0, 0, 0, 1)
 
     If (($ParentIndex < 0) Or ($NameIndex < 0)) Then
     	Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
@@ -889,8 +890,8 @@ Func MftRef2Name($IndexNumber)
       ConsoleWrite("I looked up this file's parent and it is: " & $TestParentRef)
       ConsoleWrite("I looked up this file's name and it is: " & $FileName)
     Else
-      $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[1]
-      $FileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[1]
+      $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[2]
+      $FileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[2]
     EndIf
     $BottomRef = $TestParentRef
 
@@ -898,10 +899,10 @@ Func MftRef2Name($IndexNumber)
     ; where in the filesystem heirachy this file exists is that we cache the
     ; full path of any folder reference we have used in the past in the
     ; $MftRefFullNames array.
-    $NameIndex = _ArraySearch($MftRefFullNames, $TestParentRef & ":", 0, 0, 0, 1)
+    $NameIndex = _ArraySearch($MftRefFullNames, ":" & $TestParentRef & ":", 0, 0, 0, 1)
     If ($NameIndex > -1) Then
       ;ConsoleWrite("Using cached Full Name")
-      $ResolvedPath = StringSplit($MftRefFullNames[$NameIndex], ":", $STR_NOCOUNT)[1]
+      $ResolvedPath = StringSplit($MftRefFullNames[$NameIndex], ":", $STR_NOCOUNT)[2]
 
     Else
       ; If we haven't cached the full location of this folder, we have to
@@ -915,7 +916,7 @@ Func MftRef2Name($IndexNumber)
         If (($ParentIndex > -1) And ($NameIndex > -1)) Then
           $TestFileName = StringSplit($MftRefNames[$NameIndex], ":", $STR_NOCOUNT)[2]
           $TestParentRef = StringSplit($MftRefParents[$ParentIndex], ":", $STR_NOCOUNT)[2]
-          _ConsoleWriteVerbose(2, "", "I think I know the answer.  Is it " & $TestParentRef & " and " & $TestFileName & " ?")
+          _ConsoleWriteVerbose(2, "", "I think I know the answer.  Is it #" & $TestParentRef & " and '" & $TestFileName & "' ?")
         Else
       		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
       		$NewRecord = _FindFileMFTRecord($TestParentRef)
@@ -943,7 +944,7 @@ Func MftRef2Name($IndexNumber)
       EndIf
 
       If StringLeft($ResolvedPath,2) = "." & $PathSeparator Then $ResolvedPath = StringTrimLeft($ResolvedPath,2)
-      _ArrayAdd($MftRefFullNames, $BottomRef & ":" & $ResolvedPath)
+      _ArrayAdd($MftRefFullNames, ":" & $BottomRef & ":" & $ResolvedPath)
     EndIf
 
     If ($RelativePaths) Then

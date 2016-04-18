@@ -10,7 +10,7 @@ So you don't repeat the mistake I made, because this is a console script, you ca
 
 To create a stand alone executable:
 ```
-"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.4 /productversion 1.0.0.4 /productname BackupQueueFromUSNJournal
+"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.5 /productversion 1.0.0.5 /productname BackupQueueFromUSNJournal /icon BackupQueueFromUSNJournal.ico
 ```
 
 Finally, my excuse for code in this script being ugly and inefficient is that this is the first time I have ever worked with AutoIt code and there are large portions of Joakim's code that I don't fully understand.  Sorry.
@@ -39,7 +39,7 @@ I'll document the available options in the future.  In the mean time you can see
 
 ## Usage
 ```
-BackupQueueFromUSNJournal 1.0.0.4
+BackupQueueFromUSNJournal 1.0.0.5
 
   BackupQueueFromUSNJournal.exe [-h|-l|-v|-V] [-m num] [-a file|-o file] Volume
      -a file Append changed file list to file.

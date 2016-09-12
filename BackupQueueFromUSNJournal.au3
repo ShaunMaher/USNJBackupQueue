@@ -68,6 +68,7 @@ Global $MaxUSNEntriesToProcess = 0
 Global $FSUtilMaxUSN = 0
 Global $MaxUSN = 0
 Global $MinUSN = 0
+Global $LastUsnJrnlTimestamp = ""
 Global $FirstUSN = 0
 Global $OutputToFile = ""
 Global $StatusToFile = ""
@@ -282,6 +283,7 @@ If ($ServiceMode) Then
       ; Save the most recently extracted USN as the new MinUSN in the registry
       ; https://www.autoitscript.com/autoit3/docs/functions/RegWrite.htm
       RegWrite("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "MinUSN", "REG_QWORD", $MinUSN)
+      RegWrite("HKEY_LOCAL_MACHINE\SOFTWARE\USNJBackupQueue\Volumes\" & $TargetDrive, "LastUsnJrnlTimestamp", "REG_SZ", $LastUsnJrnlTimestamp)
 
       $LastCycle = _DateDiff('s', "1970/01/01 00:00:00", _NowCalc())
     EndIf
@@ -542,15 +544,6 @@ Func _MainProcess()
     FileDelete($File)
   EndIf
 
-  ; If we're going to output to file, open the file for writing now
-  If (StringLen($OutputToFile) > 0) Then
-    $OutputFile = FileOpen($OutputToFile, $OutputFileEncoding + $AppendToOutputFile)
-    If @error Then
-      ConsoleWriteError("Error creating: " & $OutputToFile)
-      Return False
-    EndIf
-  EndIf
-
   ; Here we call the ExtractUsnJrnl.exe to extract a copy of the USN Journal from
   ; the target drive
   _ConsoleWriteLine("Extracting USN Journal with ExtractUsnJrnl.exe")
@@ -668,6 +661,15 @@ Func _MainProcess()
     Return False
   EndIf
 
+  ; If we're going to output to file, open the file for writing now
+  If (StringLen($OutputToFile) > 0) Then
+    $OutputFile = FileOpen($OutputToFile, $OutputFileEncoding + $AppendToOutputFile)
+    If @error Then
+      ConsoleWriteError("Error creating: " & $OutputToFile)
+      Return False
+    EndIf
+  EndIf
+
   ; Resolve MtfReference numbers to real file paths.  This is still our biggest
   ; performance bottleneck and needs more attention
   $MFTReferences = _ArrayUnique($MFTReferences, 0, 0, 0, $ARRAYUNIQUE_NOCOUNT, $ARRAYUNIQUE_MATCH)
@@ -675,11 +677,11 @@ Func _MainProcess()
   For $RefIndex = 1 To UBound($MFTReferences)-1
     $FullFileName = MftRef2Name($MFTReferences[$RefIndex])
     If ($IgnoreSysVolInfo) And (StringInStr($FullFileName, "System Volume Information") > 0) And (StringInStr($FullFileName, "System Volume Information") < 5) Then
-      Sleep($CPUThrottle)
+      Sleep($CPUThrottle / 5)
       ContinueLoop
     EndIf
     If ($IgnoreRecycleBin) And (StringInStr($FullFileName, "$RECYCLE.BIN") > 0) And (StringInStr($FullFileName, "$RECYCLE.BIN") < 5) Then
-      Sleep($CPUThrottle)
+      Sleep($CPUThrottle / 5)
       ContinueLoop
     EndIf
     If ($IncludeParents) Then
@@ -687,7 +689,7 @@ Func _MainProcess()
       $ParentTrail = $RelativePathPrefix
       For $ParentIndex = 1 To UBound($Parents)-2
         If (StringLen($Parents[$ParentIndex]) < 1) Then
-          Sleep($CPUThrottle)
+          Sleep($CPUThrottle / 5)
           ContinueLoop
         EndIf
         If (StringLen($ParentTrail) > 1) Then
@@ -714,7 +716,7 @@ Func _MainProcess()
       EndIf
       _ArrayAdd($OutputEntries, $FullFileName)
     EndIf
-    Sleep($CPUThrottle)
+    Sleep($CPUThrottle / 5)
   Next
 
   _ConsoleWriteVerbose(3, "", "MftRefParents: " & _ArrayToString($MftRefParents, @CRLF))
@@ -802,6 +804,7 @@ Func _UsnDecodeRecord($Record)
   ; page
   If ($UsnJrnlUsn > $LastPageMaxUSN) Then
     $LastPageMaxUSN = $UsnJrnlUsn
+    $LastUsnJrnlTimestamp = $UsnJrnlTimestamp
   EndIf
 
   ; Exclude files that match any of the regexp patterns in $ExcludeFilePatterns

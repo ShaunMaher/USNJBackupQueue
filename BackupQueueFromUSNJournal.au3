@@ -65,6 +65,7 @@ Global $MftRefNames[2]
 Global $MftRefFullNames[2]
 Global $MftRefParents[2]
 Global $MaxUSNEntriesToProcess = 0
+Global $FSUtilMaxUSN = 0
 Global $MaxUSN = 0
 Global $MinUSN = 0
 Global $FirstUSN = 0
@@ -480,13 +481,13 @@ Func _MainProcess()
           $FirstUSN = 20
         EndIf
       ElseIf (StringInStr($Line, "Next Usn") > 0) Then
-        $MaxUSN = (StringSplit($Line, ":"))[2]
-        If ((StringLen($MaxUSN) > 0) And (StringInStr($MaxUSN, "0x") > 0)) Then
-          $MaxUSN = StringReplace($MaxUSN, " ", "")
-          $MaxUSN = StringReplace($MaxUSN, "0x", "")
-          $MaxUSN = Dec($MaxUSN)
+        $FSUtilMaxUSN = (StringSplit($Line, ":"))[2]
+        If ((StringLen($FSUtilMaxUSN) > 0) And (StringInStr($FSUtilMaxUSN, "0x") > 0)) Then
+          $FSUtilMaxUSN = StringReplace($FSUtilMaxUSN, " ", "")
+          $FSUtilMaxUSN = StringReplace($FSUtilMaxUSN, "0x", "")
+          $FSUtilMaxUSN = Dec($FSUtilMaxUSN)
         Else
-          $MaxUSN = 20
+          $FSUtilMaxUSN = 20
         EndIf
       EndIf
     Next
@@ -498,7 +499,7 @@ Func _MainProcess()
   If (($MinUSN < $FirstUSN) And ($MinUSN > 0)) Then
     _ConsoleWriteLine("Minimum Acceped USN: " & $MinUSN)
     _ConsoleWriteLine("Minimum Found USN: " & $FirstUSN)
-    _ConsoleWriteLine("Maximum Found USN: " & $MaxUSN)
+    _ConsoleWriteLine("Maximum Found USN: " & $FSUtilMaxUSN)
     _ConsoleWriteError(@CRLF & "USN " & $MinUSN & " was not found in the journal.  This means that changes have been made to the filesystem between " & $MinUSN & " and now that have been removed from the journal." & @CRLF)
     _ConsoleWriteError("This may mean that your USN journal is too small or that too much time has passed (i.e. too many changes have occurred) since your last backup." & @CRLF)
     _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
@@ -506,17 +507,17 @@ Func _MainProcess()
   EndIf
 
   ; If there are more than MaxUSNEntriesToProcess (-M) entries in the journal, exit.
-  If ((($MaxUSN - $MinUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN > 0) And (Not $ServiceMode)) Then
+  If ((($FSUtilMaxUSN - $MinUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN > 0) And (Not $ServiceMode)) Then
     _ConsoleWriteLine("Minimum Acceped USN: " & $MinUSN)
     _ConsoleWriteLine("Minimum Found USN: " & $FirstUSN)
-    _ConsoleWriteLine("Maximum Found USN: " & $MaxUSN)
+    _ConsoleWriteLine("Maximum Found USN: " & $FSUtilMaxUSN)
     _ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF)
     _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
     Return False
-  ElseIf ((($MaxUSN - $FirstUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN = 0)) Then
+  ElseIf ((($FSUtilMaxUSN - $FirstUSN) > $MaxUSNEntriesToProcess) And ($MaxUSNEntriesToProcess > 0) And ($MinUSN = 0)) Then
     _ConsoleWriteLine("Minimum Acceped USN: " & $MinUSN)
     _ConsoleWriteLine("Minimum Found USN: " & $FirstUSN)
-    _ConsoleWriteLine("Maximum Found USN: " & $MaxUSN)
+    _ConsoleWriteLine("Maximum Found USN: " & $FSUtilMaxUSN)
     _ConsoleWriteError(@CRLF & "More than " & $MaxUSNEntriesToProcess & " (limit set by -M command lime parameter) exist in the journal" & @CRLF)
     _ConsoleWriteError("Please complete a full, rather than an incremental, backup." & @CRLF)
     Return False
@@ -790,7 +791,11 @@ Func _UsnDecodeRecord($Record)
   ; We will need the maximum USN value so we know where to kick off the next run
   _ConsoleWriteVerbose(4, "", "This USN: " & $UsnJrnlUsn)
   If ($UsnJrnlUsn > $MaxUSN) Then
-    $MaxUSN = $UsnJrnlUsn
+    If ($UsnJrnlUsn > $FSUtilMaxUSN) Then
+      _ConsoleWriteError("A journal entry has a USN (" & $UsnJrnlUsn & ") that is higher than FSUtil reported was possible (" & $FSUtilMaxUSN & ").")
+    Else
+      $MaxUSN = $UsnJrnlUsn
+    EndIf
   EndIf
 
   ; The page skipping logic needs to know the highest USN that we find in this

@@ -2,7 +2,7 @@
 #AutoIt3Wrapper_Change2CUI=y
 #AutoIt3Wrapper_Res_Comment=CLI Parser for $UsnJrnl (NTFS)
 #AutoIt3Wrapper_Res_Description=CLI Parser for $UsnJrnl (NTFS)
-#AutoIt3Wrapper_Res_Fileversion=1.0.0.5
+#AutoIt3Wrapper_Res_Fileversion=1.0.0.6
 #AutoIt3Wrapper_Res_requestedExecutionLevel=asInvoker
 #EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
 ;
@@ -28,7 +28,7 @@
 ; from within the AutoIt3 provided SciTE-Lite editor.
 
 ; To create a stand alone executable:
-;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.5 /productversion 1.0.0.5 /productname BackupQueueFromUSNJournal /icon BackupQueueFromUSNJournal.ico
+;"C:\Program Files (x86)\AutoIt3\Aut2Exe\Aut2exe_x64.exe" /in BackupQueueFromUSNJournal.au3 /console /fileversion 1.0.0.6 /productversion 1.0.0.6 /productname BackupQueueFromUSNJournal /icon BackupQueueFromUSNJournal.ico
 ;
 ; Finally, my excuse for code in this script being ugly and inefficient is that
 ; this is the first time I have ever worked with AutoIt code and there are large
@@ -48,8 +48,9 @@
 #Include "MftRef2Name_Functions.au3"
 
 Global $MyName = "BackupQueueFromUSNJournal"
-Global $MyVersion = "1.0.0.5"
-Global $DateTimeFormat, $TimestampPrecision
+Global $MyVersion = "1.0.0.6"
+Global $DateTimeFormat = 6
+Global $TimestampPrecision = 3
 Global $PrecisionSeparator = "."
 Global $de = "|"
 Global $Record_Size = 4096
@@ -770,6 +771,7 @@ Func _UsnDecodeRecord($Record)
 	$UsnJrnlFileNameOffset = Dec(_SwapEndian($UsnJrnlFileNameOffset),2)
 	$UsnJrnlFileName = StringMid($Record,121,$UsnJrnlFileNameLength*2)
 	$UsnJrnlFileName = _UnicodeHexToStr($UsnJrnlFileName)
+
 	If $VerboseOn > 3 Then
 		_ConsoleWriteVerbose(3, "", "$UsnJrnlFileReferenceNumber: " & $UsnJrnlFileReferenceNumber)
 		_ConsoleWriteVerbose(3, "", "$UsnJrnlMFTReferenceSeqNo: " & $UsnJrnlMFTReferenceSeqNo)
@@ -928,6 +930,10 @@ Func MftRef2Name($IndexNumber)
         Else
       		Global $DataQ[1],$AttribX[1],$AttribXType[1],$AttribXCounter[1]
       		$NewRecord = _FindFileMFTRecord($TestParentRef)
+          If ($NewRecord = "") Then
+            _ConsoleWriteError("_FindFileMFTRecord did not return a record.  Skipping.")
+            ExitLoop
+          EndIf
       		_DecodeMFTRecord($NewRecord,2)
       		$TmpRef = _GetParent()
       		If @error then ExitLoop

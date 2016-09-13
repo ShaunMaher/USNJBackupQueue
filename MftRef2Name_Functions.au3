@@ -736,6 +736,10 @@ Func _FindFileMFTRecord($MftRef)
 			$Final = $TryAt+$RecordJumper
 		Until $Final>=$TargetFileDec
 		$RecordsTooMuch = $Final-$TargetFileDec
+		If ($i < Ubound($MFT_RUN_VCN)) Then
+		Else
+			Return ""
+		EndIf
 		_WinAPI_SetFilePointerEx($hFile, $ImageOffset+$MFT_RUN_VCN[$i]*$BytesPerCluster+($Counter2*$BytesPerCluster)-($RecordsTooMuch*$MFT_Record_Size), $FILE_BEGIN)
 		_WinAPI_ReadFile($hFile, DllStructGetPtr($tBuffer), $MFT_Record_Size, $nBytes)
 		$record = DllStructGetData($tBuffer, 1)
